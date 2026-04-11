@@ -11,9 +11,39 @@
 | 영역 | 기술 |
 |------|------|
 | Backend | Python 3.11+, FastAPI, SQLAlchemy, APScheduler |
-| AI | Ollama + LLaMA 3.1 8B (로컬) |
+| AI | Ollama + Gemma 3 (로컬) |
 | Frontend | React Native (Expo SDK 54) |
 | DB | SQLite (개발) → PostgreSQL (운영 예정) |
+
+---
+
+## 핵심 아이디어: Agentic UI Control
+
+이 프로젝트의 핵심 차별점은 **AI가 대화에 그치지 않고 앱을 직접 조작**한다는 점입니다.
+
+사용자가 자연어로 말하면 AI 에이전트가 의도를 파악하고, 응답 텍스트와 함께 **실행할 액션(action)**을 프론트엔드로 전달합니다. 프론트엔드는 이 액션을 수신해 실제 UI 동작을 수행합니다.
+
+```
+사용자: "나 로그아웃해줘" (음성/텍스트)
+      ↓
+AI 에이전트 의도 분석
+      ↓
+{ "message": "네, 로그아웃할게요!", "action": "LOGOUT" }
+      ↓
+프론트엔드 → 로그아웃 실행
+```
+
+### 지원 예정 액션
+
+| 사용자 발화 | 에이전트 action | 설명 |
+|---|---|---|
+| "나 로그아웃해줘" | `LOGOUT` | 로그아웃 후 초기 화면 이동 |
+| "오늘 일과 보여줘" | `NAVIGATE:Schedule` | 스케줄 화면으로 이동 |
+| "산책 했어" | `MARK_DONE:산책` | 해당 일과 완료 처리 |
+| "3분 뒤에 알려줘" | `SNOOZE:3` | 알림 3분 연기 |
+| "보호자한테 연락해줘" | `ALERT_GUARDIAN` | 보호자 긴급 알림 발송 |
+
+> 단순 챗봇이 아닌 **앱을 스스로 제어하는 Agentic AI**를 구현하는 것이 목표입니다.
 
 ---
 
@@ -137,7 +167,7 @@ npx expo start --android
 
 ```bash
 # Ollama 설치 후
-ollama pull llama3.1
+ollama pull gemma3
 ```
 
 > Ollama 없이도 스케줄/사용자 API는 정상 동작합니다.
@@ -150,8 +180,11 @@ ollama pull llama3.1
 - [x] 5개 Tool 구현
 - [x] GitHub 연결
 - [x] 프론트엔드 초기 구조 (화면 1, 2, 4, 5)
-- [ ] 온보딩/초기 화면
-- [ ] 탭 네비게이션 (사용자 / 보호자)
-- [ ] 화면 3: 알림 화면
-- [ ] 백엔드 API 연동
+- [x] 온보딩/인증 플로우 (회원가입, PIN 로그인)
+- [x] UI 모던화 + 접근성 개선 (이모지, 큰 폰트, 뒤로가기/로그아웃 버튼)
+- [x] AI 모델: LLaMA → Gemma 3 전환
+- [ ] Agentic UI Control (음성으로 앱 조작)
+- [ ] 채팅 화면 (AI 대화 프론트)
+- [ ] 스케줄 관리 화면 (보호자)
+- [ ] 백엔드 API 연동 (mock 데이터 제거)
 - [ ] Ollama 모델 세팅 및 테스트
