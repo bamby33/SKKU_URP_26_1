@@ -74,6 +74,8 @@ class Guardian(Base):
     name = Column(String, nullable=False)
     phone = Column(String, nullable=False)
     email = Column(String, nullable=True)
+    username = Column(String, unique=True, nullable=True)    # 로그인 아이디
+    hashed_password = Column(String, nullable=True)          # bcrypt 해시
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="guardian")
@@ -122,6 +124,19 @@ class BehaviorLog(Base):
     logged_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="behavior_logs")
+
+
+class UserPIN(Base):
+    """당사자 취향 기반 로그인 PIN (3문제)"""
+    __tablename__ = "user_pins"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    order = Column(Integer, nullable=False)               # 1, 2, 3
+    question = Column(String, nullable=False)             # "제일 좋아하는 음식은?"
+    correct_answer = Column(String, nullable=False)       # "치킨"
+    correct_emoji = Column(String, nullable=False)        # "🍗"
+    wrong_options = Column(Text, nullable=False)          # JSON 문자열
 
 
 class ChatMessage(Base):

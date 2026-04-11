@@ -9,13 +9,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'PersonInfo'>;
-  route: RouteProp<RootStackParamList, 'PersonInfo'>;
 };
 
 const GENDERS = [
@@ -24,8 +22,7 @@ const GENDERS = [
   { key: 'other', label: '기타', emoji: '🧒' },
 ];
 
-export default function PersonInfoScreen({ navigation, route }: Props) {
-  const { role } = route.params;
+export default function PersonInfoScreen({ navigation }: Props) {
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
   const [gender, setGender] = useState<string | null>(null);
@@ -33,13 +30,11 @@ export default function PersonInfoScreen({ navigation, route }: Props) {
   const canNext = name.trim().length > 0 && age.trim().length > 0 && gender !== null;
 
   const handleNext = () => {
-    const trimmedName = name.trim();
-    const info = { name: trimmedName, age: age.trim(), gender: gender! };
-    if (role === 'guardian') {
-      navigation.navigate('Preferences', info);
-    } else {
-      navigation.navigate('Welcome', { name: trimmedName, role: 'user' });
-    }
+    navigation.navigate('Preferences', {
+      userName: name.trim(),
+      age: age.trim(),
+      gender: gender!,
+    });
   };
 
   return (
@@ -56,14 +51,12 @@ export default function PersonInfoScreen({ navigation, route }: Props) {
             </TouchableOpacity>
             <View style={styles.stepRow}>
               <View style={[styles.stepDot, styles.stepDotActive]} />
-              {role === 'guardian' && (
-                <>
-                  <View style={styles.stepLine} />
-                  <View style={styles.stepDot} />
-                  <View style={styles.stepLine} />
-                  <View style={styles.stepDot} />
-                </>
-              )}
+              <View style={styles.stepLine} />
+              <View style={styles.stepDot} />
+              <View style={styles.stepLine} />
+              <View style={styles.stepDot} />
+              <View style={styles.stepLine} />
+              <View style={styles.stepDot} />
             </View>
           </View>
 
@@ -71,11 +64,7 @@ export default function PersonInfoScreen({ navigation, route }: Props) {
           <View style={styles.titleArea}>
             <Text style={styles.emoji}>📋</Text>
             <Text style={styles.title}>당사자 정보를{'\n'}알려주세요</Text>
-            <Text style={styles.subtitle}>
-              {role === 'guardian'
-                ? '보호하시는 분의 정보를 입력해주세요'
-                : '본인 정보를 입력해주세요'}
-            </Text>
+            <Text style={styles.subtitle}>보호하시는 분의 정보를 입력해주세요</Text>
           </View>
 
           {/* 이름 */}
@@ -135,9 +124,7 @@ export default function PersonInfoScreen({ navigation, route }: Props) {
             disabled={!canNext}
             activeOpacity={0.85}
           >
-            <Text style={styles.nextBtnText}>
-              {role === 'guardian' ? '다음 →' : '시작하기 →'}
-            </Text>
+            <Text style={styles.nextBtnText}>다음 →</Text>
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>

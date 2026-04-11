@@ -7,7 +7,13 @@ import {
   View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
+
+type Props = {
+  navigation: NativeStackNavigationProp<RootStackParamList, 'Emergency'>;
+};
 
 const OPTIONS = [
   { emoji: '🎵', label: '좋아하는\n음악 듣기', bg: '#e8f5e9' },
@@ -18,7 +24,7 @@ const OPTIONS = [
 
 const STAGES = ['지나감', '지금', '이후'];
 
-export default function EmergencyScreen() {
+export default function EmergencyScreen({ navigation }: Props) {
   const [currentStage] = useState(1); // 0=stage1 지남, 1=stage2 현재, 2=stage3 이후
   const [listening, setListening] = useState(true);
 
@@ -33,9 +39,14 @@ export default function EmergencyScreen() {
     <SafeAreaView style={styles.container}>
       {/* 경고 헤더 */}
       <View style={styles.alertHeader}>
-        <Text style={styles.alertEmoji}>🤗</Text>
-        <Text style={styles.alertTitle}>괜찮아요, 진정해봐요</Text>
-        <Text style={styles.alertSub}>AI가 도와줄게요 💙</Text>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+          <Text style={styles.backText}>←</Text>
+        </TouchableOpacity>
+        <View style={styles.alertCenter}>
+          <Text style={styles.alertEmoji}>🤗</Text>
+          <Text style={styles.alertTitle}>괜찮아요, 진정해봐요</Text>
+          <Text style={styles.alertSub}>AI가 도와줄게요 💙</Text>
+        </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -106,10 +117,12 @@ const styles = StyleSheet.create({
 
   alertHeader: {
     backgroundColor: colors.alert,
-    alignItems: 'center',
     paddingVertical: 16,
     paddingHorizontal: 16,
   },
+  backBtn: { padding: 4, marginBottom: 4 },
+  backText: { fontSize: 22, color: 'rgba(255,255,255,0.85)' },
+  alertCenter: { alignItems: 'center' },
   alertEmoji: { fontSize: 28, marginBottom: 4 },
   alertTitle: { color: colors.white, fontSize: 18, fontWeight: '800' },
   alertSub: { color: 'rgba(255,255,255,0.85)', fontSize: 12, marginTop: 3 },

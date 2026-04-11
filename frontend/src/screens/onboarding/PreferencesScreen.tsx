@@ -22,7 +22,7 @@ const LIKE_SUGGESTIONS = ['음악 듣기', '산책', '그림 그리기', '블록
 const DISLIKE_SUGGESTIONS = ['큰 소리', '갑작스러운 변화', '낯선 장소', '긴 대기', '붐비는 곳'];
 
 export default function PreferencesScreen({ navigation, route }: Props) {
-  const { name, age, gender } = route.params;
+  const { userName, age, gender } = route.params;
 
   const [likes, setLikes] = useState<string[]>([]);
   const [dislikes, setDislikes] = useState<string[]>([]);
@@ -59,7 +59,7 @@ export default function PreferencesScreen({ navigation, route }: Props) {
   };
 
   const handleNext = () => {
-    navigation.navigate('ScheduleSetup', { name, age, gender, likes, dislikes });
+    navigation.navigate('ScheduleSetup', { userName, age, gender, likes, dislikes });
   };
 
   return (
@@ -86,7 +86,7 @@ export default function PreferencesScreen({ navigation, route }: Props) {
           {/* 타이틀 */}
           <View style={styles.titleArea}>
             <Text style={styles.emoji}>💝</Text>
-            <Text style={styles.title}>{name}의{'\n'}특성을 알려주세요</Text>
+            <Text style={styles.title}>{userName}의{'\n'}특성을 알려주세요</Text>
             <Text style={styles.subtitle}>AI가 더 잘 도와줄 수 있어요</Text>
           </View>
 

@@ -40,7 +40,7 @@ const EMOJIS = ['🌅', '🍚', '🍱', '🍽️', '🚶', '📖', '🎵', '🧸
 let nextId = DEFAULT_SCHEDULES.length + 1;
 
 export default function ScheduleSetupScreen({ navigation, route }: Props) {
-  const { name } = route.params;
+  const { userName, age, gender, likes, dislikes } = route.params;
   const [schedules, setSchedules] = useState<ScheduleItem[]>(DEFAULT_SCHEDULES);
   const [adding, setAdding] = useState(false);
   const [newTime, setNewTime] = useState('');
@@ -72,7 +72,7 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
   };
 
   const handleComplete = () => {
-    navigation.navigate('Welcome', { name, role: 'guardian' });
+    navigation.navigate('AccountSetup', { userName, age, gender, likes, dislikes });
   };
 
   return (
@@ -99,7 +99,7 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
           {/* 타이틀 */}
           <View style={styles.titleArea}>
             <Text style={styles.emoji}>📅</Text>
-            <Text style={styles.title}>{name}의{'\n'}일과를 설정해요</Text>
+            <Text style={styles.title}>{userName}의{'\n'}일과를 설정해요</Text>
             <Text style={styles.subtitle}>기본 스케줄을 추가하거나 수정해주세요</Text>
           </View>
 
