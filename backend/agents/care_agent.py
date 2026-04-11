@@ -1,6 +1,6 @@
 """
 Care Agent - 발달장애인 돌봄 에이전트 AI 핵심 로직
-- Ollama (LLaMA 3.1 8B) 기반
+- Ollama (Gemma 3) 기반
 - 5개 Tool을 자율적으로 호출하며 대화 흐름 관리
 """
 import json
@@ -18,7 +18,7 @@ from agents.tools.messaging import send_message, TOOL_DEFINITION as T5
 load_dotenv()
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3")
 
 # Tool 정의 목록
 TOOLS = [T1, T2, T3, T4, T5]

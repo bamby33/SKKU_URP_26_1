@@ -97,7 +97,7 @@ export default function WelcomeScreen({ navigation, route }: Props) {
 
         {/* 뒤로가기 */}
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backText}>←</Text>
+          <Text style={styles.backText}>← 뒤로</Text>
         </TouchableOpacity>
 
         <View style={styles.robotArea}>
@@ -152,8 +152,16 @@ const styles = StyleSheet.create({
     flex: 1, paddingHorizontal: 28, paddingTop: 16, paddingBottom: 32,
     justifyContent: 'space-between',
   },
-  backBtn: { padding: 4, alignSelf: 'flex-start' },
-  backText: { fontSize: 22, color: colors.guardian },
+  backBtn: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(6,95,70,0.1)',
+    borderRadius: 20,
+  },
+  backText: { fontSize: 15, color: colors.guardian, fontWeight: '800' },
   robotArea: { alignItems: 'center', flex: 1, justifyContent: 'center' },
   robotEmoji: { fontSize: 100, lineHeight: 110 },
 

@@ -113,7 +113,7 @@ export default function PINLoginScreen({ navigation }: Props) {
         {/* 헤더 */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <Text style={styles.backText}>←</Text>
+            <Text style={styles.backText}>← 뒤로</Text>
           </TouchableOpacity>
           {/* 진행 바 */}
           <View style={styles.progressRow}>
@@ -204,8 +204,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8, gap: 16,
   },
-  backBtn: { padding: 4 },
-  backText: { fontSize: 22, color: colors.primary },
+  backBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    backgroundColor: colors.primaryBg,
+    borderRadius: 20,
+  },
+  backText: { fontSize: 15, color: colors.primary, fontWeight: '800' },
   progressRow: { flex: 1, flexDirection: 'row', gap: 6 },
   progressBar: { flex: 1, height: 6, borderRadius: 3, backgroundColor: '#d0daf0' },
   progressBarDone: { backgroundColor: colors.primaryLight },

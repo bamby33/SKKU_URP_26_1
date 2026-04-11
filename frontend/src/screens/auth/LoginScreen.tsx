@@ -59,7 +59,7 @@ export default function LoginScreen({ navigation }: Props) {
           {/* 헤더 */}
           <View style={styles.header}>
             <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-              <Text style={styles.backText}>←</Text>
+              <Text style={styles.backText}>← 뒤로</Text>
             </TouchableOpacity>
           </View>
 
@@ -183,8 +183,16 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f4f7ff' },
 
   header: { paddingHorizontal: 20, paddingTop: 12 },
-  backBtn: { padding: 4 },
-  backText: { fontSize: 22, color: colors.primary },
+  backBtn: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: colors.primaryBg,
+    borderRadius: 20,
+  },
+  backText: { fontSize: 15, color: colors.primary, fontWeight: '800' },
 
   content: { padding: 24, gap: 24 },
 

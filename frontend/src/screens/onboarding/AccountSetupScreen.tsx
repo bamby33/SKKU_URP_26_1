@@ -54,7 +54,7 @@ export default function AccountSetupScreen({ navigation, route }: Props) {
           {/* 헤더 */}
           <View style={styles.header}>
             <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-              <Text style={styles.backText}>←</Text>
+              <Text style={styles.backText}>← 뒤로</Text>
             </TouchableOpacity>
             <View style={styles.stepRow}>
               {[0, 1, 2, 3].map((i) => (
@@ -180,8 +180,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8,
   },
-  backBtn: { padding: 4 },
-  backText: { fontSize: 22, color: colors.primary },
+  backBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: colors.primaryBg,
+    borderRadius: 20,
+  },
+  backText: { fontSize: 15, color: colors.primary, fontWeight: '800' },
   stepRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   stepDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#d0daf0' },
   stepDotActive: { backgroundColor: colors.primary },
