@@ -1,13 +1,14 @@
 """
 Care Agent - 발달장애인 돌봄 에이전트 AI 핵심 로직
-- Google Generative AI (Gemma) 기반
+- Google GenAI SDK (Gemma) 기반
 - 5개 Tool을 자율적으로 호출하며 대화 흐름 관리
 """
 import json
 import os
 from typing import Any, Generator
 from dotenv import load_dotenv
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from agents.tools.personalization import personalize_user, TOOL_DEFINITION as T1
 from agents.tools.schedule_check import check_schedule, TOOL_DEFINITION as T2
@@ -20,7 +21,7 @@ load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 GEMMA_MODEL = os.getenv("GEMMA_MODEL", "gemma-3-12b-it")
 
-genai.configure(api_key=GOOGLE_API_KEY)
+client = genai.Client(api_key=GOOGLE_API_KEY)
 
 # Tool 실행 함수 매핑
 TOOL_EXECUTORS: dict[str, Any] = {
@@ -31,19 +32,21 @@ TOOL_EXECUTORS: dict[str, Any] = {
     "send_message": send_message,
 }
 
-# OpenAI 형식 Tool 정의 → Google Generative AI 형식으로 변환
-def _to_genai_tools(tool_defs: list[dict]) -> list[dict]:
-    function_declarations = []
+# OpenAI 형식 Tool 정의 → google-genai FunctionDeclaration 변환
+def _build_tools(tool_defs: list[dict]) -> list[types.Tool]:
+    declarations = []
     for tool in tool_defs:
         fn = tool["function"]
-        function_declarations.append({
-            "name": fn["name"],
-            "description": fn["description"],
-            "parameters": fn["parameters"],
-        })
-    return [{"function_declarations": function_declarations}]
+        declarations.append(
+            types.FunctionDeclaration(
+                name=fn["name"],
+                description=fn["description"],
+                parameters=fn["parameters"],
+            )
+        )
+    return [types.Tool(function_declarations=declarations)]
 
-TOOLS = _to_genai_tools([T1, T2, T3, T4, T5])
+TOOLS = _build_tools([T1, T2, T3, T4, T5])
 
 SYSTEM_PROMPT = """당신은 발달장애인을 돌보는 AI 에이전트입니다.
 
@@ -66,52 +69,45 @@ Tool 사용 규칙:
 - 보호자에게 알림 필요 시 → send_message 호출
 """
 
+CONFIG = types.GenerateContentConfig(
+    system_instruction=SYSTEM_PROMPT,
+    tools=TOOLS,
+)
 
-def _execute_tool(tool_name: str, tool_args: dict) -> str:
-    """Tool 실행 및 결과를 JSON 문자열로 반환"""
+
+def _build_contents(history: list[dict], user_message: str) -> list[types.Content]:
+    """대화 기록 + 현재 메시지를 Content 리스트로 변환"""
+    contents = []
+    for msg in history:
+        role = "user" if msg["role"] == "user" else "model"
+        contents.append(types.Content(role=role, parts=[types.Part(text=msg["content"])]))
+    contents.append(types.Content(role="user", parts=[types.Part(text=user_message)]))
+    return contents
+
+
+def _execute_tool(tool_name: str, tool_args: dict) -> dict:
+    """Tool 실행 및 결과 반환"""
     executor = TOOL_EXECUTORS.get(tool_name)
     if not executor:
-        return json.dumps({"error": f"알 수 없는 Tool: {tool_name}"})
+        return {"error": f"알 수 없는 Tool: {tool_name}"}
     try:
-        result = executor(**tool_args)
-        return json.dumps(result, ensure_ascii=False, default=str)
+        return executor(**tool_args)
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return {"error": str(e)}
 
 
 def chat(
     user_id: int,
     message: str,
     history: list[dict] | None = None,
-    context: dict | None = None
+    context: dict | None = None,
 ) -> dict[str, Any]:
     """
     사용자 메시지를 받아 AI 응답 반환 (Tool 자동 호출 포함)
 
-    Args:
-        user_id: 사용자 ID
-        message: 사용자 메시지
-        history: 이전 대화 기록 [{"role": "user"/"assistant", "content": "..."}]
-        context: 추가 컨텍스트 (decibel, gps_moved 등)
-
     Returns:
         {"reply": str, "tool_calls": list, "stage": str | None}
     """
-    model = genai.GenerativeModel(
-        model_name=GEMMA_MODEL,
-        system_instruction=SYSTEM_PROMPT,
-        tools=TOOLS,
-    )
-
-    # 히스토리 변환 (OpenAI 형식 → Google 형식)
-    chat_history = []
-    if history:
-        for msg in history:
-            role = "user" if msg["role"] == "user" else "model"
-            chat_history.append({"role": role, "parts": [msg["content"]]})
-
-    chat_session = model.start_chat(history=chat_history)
-
     # 컨텍스트 정보를 메시지에 포함
     user_content = message
     if context:
@@ -124,31 +120,38 @@ def chat(
         if ctx_parts:
             user_content = " ".join(ctx_parts) + " " + message
 
+    contents = _build_contents(history or [], user_content)
     tool_calls_made = []
     final_reply = ""
 
-    response = chat_session.send_message(user_content)
-
-    # Agentic loop - Tool 호출이 없을 때까지 반복
+    # Agentic loop - Tool 호출이 없을 때까지 반복 (최대 5회)
     for _ in range(5):
-        has_function_call = any(
-            hasattr(part, "function_call") and part.function_call.name
-            for part in response.parts
+        response = client.models.generate_content(
+            model=GEMMA_MODEL,
+            contents=contents,
+            config=CONFIG,
         )
 
-        if not has_function_call:
-            final_reply = response.text
+        candidate = response.candidates[0]
+        parts = candidate.content.parts
+
+        # 응답을 contents에 추가
+        contents.append(types.Content(role="model", parts=parts))
+
+        # Function call 파트 수집
+        function_calls = [p for p in parts if p.function_call and p.function_call.name]
+
+        if not function_calls:
+            # 텍스트 응답 수집
+            final_reply = "".join(p.text for p in parts if p.text)
             break
 
-        # Tool 실행
-        tool_responses = []
-        for part in response.parts:
-            if not (hasattr(part, "function_call") and part.function_call.name):
-                continue
-
+        # Tool 실행 후 결과 전달
+        tool_response_parts = []
+        for part in function_calls:
             fc = part.function_call
             tool_name = fc.name
-            tool_args = dict(fc.args)
+            tool_args = dict(fc.args) if fc.args else {}
 
             # user_id 자동 주입
             executor = TOOL_EXECUTORS.get(tool_name)
@@ -156,24 +159,19 @@ def chat(
                     "user_id" in executor.__code__.co_varnames:
                 tool_args.setdefault("user_id", user_id)
 
-            result_str = _execute_tool(tool_name, tool_args)
-            result_dict = json.loads(result_str)
-            tool_calls_made.append({
-                "tool": tool_name,
-                "args": tool_args,
-                "result": result_dict,
-            })
+            result = _execute_tool(tool_name, tool_args)
+            tool_calls_made.append({"tool": tool_name, "args": tool_args, "result": result})
 
-            tool_responses.append(
-                genai.protos.Part(
-                    function_response=genai.protos.FunctionResponse(
+            tool_response_parts.append(
+                types.Part(
+                    function_response=types.FunctionResponse(
                         name=tool_name,
-                        response={"result": result_dict},
+                        response={"result": result},
                     )
                 )
             )
 
-        response = chat_session.send_message(tool_responses)
+        contents.append(types.Content(role="tool", parts=tool_response_parts))
 
     # 피드백 단계 추출
     stage = None
@@ -181,18 +179,14 @@ def chat(
         if tc["tool"] == "provide_feedback":
             stage = tc["args"].get("stage")
 
-    return {
-        "reply": final_reply,
-        "tool_calls": tool_calls_made,
-        "stage": stage,
-    }
+    return {"reply": final_reply, "tool_calls": tool_calls_made, "stage": stage}
 
 
 def stream_chat(
     user_id: int,
     message: str,
     history: list[dict] | None = None,
-    context: dict | None = None
+    context: dict | None = None,
 ) -> Generator[str, None, None]:
     """스트리밍 응답 버전 (WebSocket 용)"""
     result = chat(user_id, message, history, context)

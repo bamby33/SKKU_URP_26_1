@@ -5,7 +5,7 @@ const BASE_URL = 'http://10.0.2.2:8000';
 
 export const api = axios.create({
   baseURL: BASE_URL,
-  timeout: 10000,
+  timeout: 60000,
   headers: { 'Content-Type': 'application/json' },
 });
 
@@ -22,7 +22,7 @@ export const getUser = (userId: number) =>
 
 // 스케줄 API
 export const getSchedules = (userId: number) =>
-  api.get(`/schedules/?user_id=${userId}`);
+  api.get(`/schedules/user/${userId}`);
 
 export const checkSchedule = (scheduleId: number, achieved: boolean, note?: string) =>
   api.post('/schedules/check', { schedule_id: scheduleId, achieved, note });
