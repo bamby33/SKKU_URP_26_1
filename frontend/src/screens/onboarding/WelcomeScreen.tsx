@@ -22,8 +22,15 @@ type Props = {
 export default function WelcomeScreen({ navigation, route }: Props) {
   const {
     userName, guardianName, guardianPhone,
-    username, password, pins,
+    username, password, pins, schedules,
   } = route.params;
+
+  const slotToTime = (slot: number) => {
+    const mins = 6 * 60 + slot * 30;
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  };
 
   const bounceAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -81,6 +88,16 @@ export default function WelcomeScreen({ navigation, route }: Props) {
 
       // 2. PIN 설정
       await api.post(`/users/${userId}/pins`, pins);
+
+      // 3. 스케줄 저장
+      for (const s of schedules) {
+        await api.post('/schedules/', {
+          user_id: userId,
+          title: `${s.emoji} ${s.activity}`,
+          scheduled_time: slotToTime(s.startSlot),
+          days_of_week: String(s.day),
+        });
+      }
 
       navigation.reset({ index: 0, routes: [{ name: 'GuardianReport' }] });
     } catch (e: any) {

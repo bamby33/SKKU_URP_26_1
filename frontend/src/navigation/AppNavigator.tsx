@@ -21,13 +21,23 @@ export type PINItem = {
   correct_emoji: string;
 };
 
+export type ScheduleParam = {
+  day: number;       // 0=월 … 6=일
+  startSlot: number; // 0 = 06:00, 1 = 06:30 ...
+  endSlot: number;   // exclusive
+  activity: string;
+  emoji: string;
+  color: string;
+};
+
 // 회원가입 데이터를 화면간 전달하는 공통 타입
 type SignupBase = {
-  userName: string;   // 당사자 이름
+  userName: string;
   age: string;
   gender: string;
   likes: string[];
   dislikes: string[];
+  schedules: ScheduleParam[];
 };
 
 type AccountInfo = SignupBase & {
