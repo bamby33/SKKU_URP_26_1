@@ -6,8 +6,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView,
   StyleSheet, Animated, Easing, Alert, ActivityIndicator,
-  TextInput, Keyboard,
+  TextInput, Keyboard, Modal,
 } from 'react-native';
+import * as Speech from 'expo-speech';
+import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from 'expo-speech-recognition';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -34,9 +36,19 @@ type ChatMessage = {
 
 const DAY_LABELS = ['월', '화', '수', '목', '금', '토', '일'];
 const MEAL_KEYWORDS = ['밥 먹을 시간', '식사 시간', '밥 먹자', '식사해요', '식사할', '아침', '점심', '저녁'];
+const SLEEP_KEYWORDS = ['취침', '수면', '자기', '잠자기', '잠'];
 
 function isMealAlert(text: string): boolean {
   return MEAL_KEYWORDS.some(kw => text.includes(kw));
+}
+
+function isSleepSchedule(title: string): boolean {
+  return SLEEP_KEYWORDS.some(kw => title.includes(kw));
+}
+
+function extractEmoji(title: string): string {
+  const match = title.match(/\p{Emoji_Presentation}/u);
+  return match ? match[0] : '📋';
 }
 
 function getTodayIndex(): number {
@@ -44,8 +56,8 @@ function getTodayIndex(): number {
 }
 
 export default function ScheduleScreen({ navigation }: Props) {
-  const bounceAnim = useRef(new Animated.Value(0)).current;
   const scrollRef = useRef<ScrollView>(null);
+  const bounceAnim = useRef(new Animated.Value(0)).current;
 
   const [userId, setUserId] = useState<number | null>(null);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
@@ -54,12 +66,23 @@ export default function ScheduleScreen({ navigation }: Props) {
   const [inputText, setInputText] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+
+  // 음성 인식 이벤트
+  useSpeechRecognitionEvent('start', () => setIsListening(true));
+  useSpeechRecognitionEvent('end', () => setIsListening(false));
+  useSpeechRecognitionEvent('error', () => setIsListening(false));
+  useSpeechRecognitionEvent('result', (event) => {
+    const text = event.results[0]?.transcript ?? '';
+    if (text && event.isFinal) handleSend(text);
+  });
 
   const now = new Date();
   const hour = now.getHours();
   const minute = now.getMinutes();
   const nowTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-  const timeStr = `${hour < 12 ? '오전' : '오후'} ${hour <= 12 ? hour : hour - 12}:${String(minute).padStart(2, '0')}`;
 
   const todayIndex = getTodayIndex();
   const todaySchedules = schedules
@@ -68,6 +91,15 @@ export default function ScheduleScreen({ navigation }: Props) {
 
   const currentSchedule = [...todaySchedules].reverse().find(s => s.scheduled_time <= nowTime);
   const nextSchedule = todaySchedules.find(s => s.scheduled_time > nowTime);
+
+  // 취침 야간 연장: 오늘 아직 시작된 일과가 없으면 어제 마지막 일과가 취침인지 확인
+  const yesterdayIndex = (todayIndex + 6) % 7;
+  const yesterdayLast = schedules
+    .filter(s => s.days_of_week.split(',').map(Number).includes(yesterdayIndex))
+    .sort((a, b) => a.scheduled_time.localeCompare(b.scheduled_time))
+    .at(-1);
+  const effectiveCurrent = currentSchedule
+    ?? (!currentSchedule && yesterdayLast && isSleepSchedule(yesterdayLast.title) ? yesterdayLast : null);
 
   // 일주일 그리드
   const times = [...new Set(schedules.map(s => s.scheduled_time))].sort();
@@ -98,6 +130,7 @@ export default function ScheduleScreen({ navigation }: Props) {
       ])
     ).start();
   }, []);
+
 
   useEffect(() => {
     (async () => {
@@ -131,13 +164,13 @@ export default function ScheduleScreen({ navigation }: Props) {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
   }, [messages]);
 
-  const handleSend = async () => {
-    const text = inputText.trim();
+  const handleSend = async (voiceText?: string) => {
+    const text = (voiceText ?? inputText).trim();
     if (!text || !userId || aiLoading) return;
 
     const userMsg: ChatMessage = { id: Date.now(), role: 'user', content: text };
     setMessages(prev => [...prev, userMsg]);
-    setInputText('');
+    if (!voiceText) setInputText('');
     setAiLoading(true);
 
     try {
@@ -145,6 +178,7 @@ export default function ScheduleScreen({ navigation }: Props) {
       const reply = res.data.reply;
       if (reply) {
         setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: reply }]);
+        Speech.speak(reply, { language: 'ko-KR' });
       }
     } catch (e) {
       setMessages(prev => [...prev, {
@@ -154,6 +188,19 @@ export default function ScheduleScreen({ navigation }: Props) {
       }]);
     } finally {
       setAiLoading(false);
+    }
+  };
+
+  const handleMicPress = async () => {
+    if (isListening) {
+      ExpoSpeechRecognitionModule.stop();
+    } else {
+      const { granted } = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      if (!granted) {
+        Alert.alert('권한 필요', '마이크 권한을 허용해 주세요.');
+        return;
+      }
+      ExpoSpeechRecognitionModule.start({ lang: 'ko-KR', interimResults: false });
     }
   };
 
@@ -173,7 +220,7 @@ export default function ScheduleScreen({ navigation }: Props) {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* 헤더: 다음 일과 */}
+      {/* 헤더: 다음 일과 + 메뉴 */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Text style={styles.nextLabel}>다음 일과</Text>
@@ -181,36 +228,33 @@ export default function ScheduleScreen({ navigation }: Props) {
             {nextSchedule ? `${nextSchedule.scheduled_time} ${nextSchedule.title}` : '오늘 일과 없음'}
           </Text>
         </View>
-        <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.75}>
-          <Text style={styles.logoutText}>🚪 나가기</Text>
+        <TouchableOpacity style={styles.menuBtn} onPress={() => setShowMenu(true)} activeOpacity={0.75}>
+          <Text style={styles.menuBtnText}>☰</Text>
         </TouchableOpacity>
       </View>
 
       <View style={{ flex: 1 }}>
-        <ScrollView
-          ref={scrollRef}
-          contentContainerStyle={styles.content}
-          showsVerticalScrollIndicator={false}
-        >
-          {/* 시간 배지 */}
-          <View style={styles.timeBadge}>
-            <Text style={styles.timeBadgeText}>⏰ {timeStr}</Text>
-          </View>
-
-          {/* 현재 일과 이모지 */}
+        {/* 현재 할 일 + 이모지 */}
+        <View style={styles.topContent}>
           <Animated.Text style={[styles.emojiBig, { transform: [{ translateY: bounceAnim }] }]}>
-            🍚
+            {effectiveCurrent ? extractEmoji(effectiveCurrent.title) : '📋'}
           </Animated.Text>
-
-          {/* 현재 일과 안내 */}
           <View style={styles.currentCard}>
             <Text style={styles.currentLabel}>지금 할 일이에요!</Text>
-            <Text style={styles.currentTitle}>{currentSchedule?.title ?? '일과를 확인 중이에요'}</Text>
-            <Text style={styles.currentTime}>{currentSchedule?.scheduled_time ?? ''}</Text>
+            <Text style={styles.currentTitle}>{effectiveCurrent?.title ?? '일과를 확인 중이에요'}</Text>
+            <Text style={styles.currentTime}>{effectiveCurrent?.scheduled_time ?? ''}</Text>
           </View>
+        </View>
 
-          {/* AI 채팅 메시지 */}
-          <View style={styles.chatSection}>
+        {/* 채팅 + 입력 영역 (남은 공간 채움) */}
+        <View style={[styles.chatBox, { marginBottom: keyboardHeight }]}>
+          {/* 채팅 메시지 */}
+          <ScrollView
+            ref={scrollRef}
+            style={styles.chatSection}
+            contentContainerStyle={styles.chatContent}
+            showsVerticalScrollIndicator={false}
+          >
             {messages.length === 0 && !aiLoading && (
               <View style={styles.chatBubbleRow}>
                 <Text style={styles.chatAvatar}>🤖</Text>
@@ -240,16 +284,12 @@ export default function ScheduleScreen({ navigation }: Props) {
                 </View>
               </View>
             )}
-          </View>
+          </ScrollView>
 
           {/* 식사 알림 시 행동 버튼 */}
           {showActionButtons && (
             <View style={styles.actionRow}>
-              <TouchableOpacity
-                style={styles.btnOk}
-                onPress={() => handleSend()}
-                activeOpacity={0.85}
-              >
+              <TouchableOpacity style={styles.btnOk} onPress={() => handleSend()} activeOpacity={0.85}>
                 <Text style={styles.btnOkEmoji}>✅</Text>
                 <Text style={styles.btnOkText}>알겠어요!</Text>
               </TouchableOpacity>
@@ -260,11 +300,63 @@ export default function ScheduleScreen({ navigation }: Props) {
             </View>
           )}
 
-          {/* 일주일 스케줄 표 */}
-          <View style={styles.tableCard}>
-            <Text style={styles.tableTitle}>📅 일주일 스케줄</Text>
+          {/* 입력창 */}
+          <View style={styles.inputBar}>
+            <TouchableOpacity
+              style={[styles.micBtn, isListening && styles.micBtnActive]}
+              onPress={handleMicPress}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.micBtnText}>{isListening ? '⏹' : '🎤'}</Text>
+            </TouchableOpacity>
+            <TextInput
+              style={styles.input}
+              value={inputText}
+              onChangeText={setInputText}
+              placeholder={isListening ? '듣고 있어요…' : 'AI에게 말해보세요…'}
+              placeholderTextColor={isListening ? colors.primary : '#94A3B8'}
+              returnKeyType="send"
+              onSubmitEditing={() => handleSend()}
+              editable={!aiLoading && !isListening}
+            />
+            <TouchableOpacity
+              style={[styles.sendBtn, (!inputText.trim() || aiLoading) && styles.sendBtnDisabled]}
+              onPress={() => handleSend()}
+              disabled={!inputText.trim() || aiLoading}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.sendBtnText}>전송</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* 메뉴 모달 */}
+        <Modal visible={showMenu} animationType="fade" transparent onRequestClose={() => setShowMenu(false)}>
+          <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowMenu(false)} />
+          <View style={styles.menuSheet}>
+            <TouchableOpacity style={styles.menuItem} onPress={() => { setShowMenu(false); setShowSchedule(true); }} activeOpacity={0.8}>
+              <Text style={styles.menuItemText}>📅 일주일 스케줄</Text>
+            </TouchableOpacity>
+            <View style={styles.menuDivider} />
+            <TouchableOpacity style={styles.menuItem} onPress={() => { setShowMenu(false); handleLogout(); }} activeOpacity={0.8}>
+              <Text style={[styles.menuItemText, { color: '#EF4444' }]}>🚪 로그아웃</Text>
+            </TouchableOpacity>
+          </View>
+        </Modal>
+
+        {/* 일주일 스케줄 모달 */}
+        <Modal visible={showSchedule} animationType="slide" transparent onRequestClose={() => setShowSchedule(false)}>
+          <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowSchedule(false)} />
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHandle} />
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>📅 일주일 스케줄</Text>
+              <TouchableOpacity onPress={() => setShowSchedule(false)}>
+                <Text style={styles.modalClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
             {scheduleLoading ? (
-              <ActivityIndicator color={colors.primary} style={{ marginVertical: 16 }} />
+              <ActivityIndicator color={colors.primary} style={{ marginVertical: 24 }} />
             ) : times.length === 0 ? (
               <Text style={styles.emptyText}>등록된 스케줄이 없어요</Text>
             ) : (
@@ -302,29 +394,8 @@ export default function ScheduleScreen({ navigation }: Props) {
               </ScrollView>
             )}
           </View>
-        </ScrollView>
+        </Modal>
 
-        {/* 입력창 */}
-        <View style={[styles.inputBar, { marginBottom: keyboardHeight }]}>
-          <TextInput
-            style={styles.input}
-            value={inputText}
-            onChangeText={setInputText}
-            placeholder="AI에게 말해보세요…"
-            placeholderTextColor="#94A3B8"
-            returnKeyType="send"
-            onSubmitEditing={handleSend}
-            editable={!aiLoading}
-          />
-          <TouchableOpacity
-            style={[styles.sendBtn, (!inputText.trim() || aiLoading) && styles.sendBtnDisabled]}
-            onPress={handleSend}
-            disabled={!inputText.trim() || aiLoading}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.sendBtnText}>전송</Text>
-          </TouchableOpacity>
-        </View>
       </View>
     </SafeAreaView>
   );
@@ -334,7 +405,7 @@ const CELL_W = 52;
 const TIME_W = 48;
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#DBEAFE' },
+  container: { flex: 1, backgroundColor: colors.white },
 
   header: {
     backgroundColor: colors.primary,
@@ -348,15 +419,34 @@ const styles = StyleSheet.create({
   nextLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 12, fontWeight: '600' },
   nextText: { color: colors.white, fontSize: 15, fontWeight: '800' },
 
-  logoutBtn: {
+  menuBtn: {
     backgroundColor: 'rgba(255,255,255,0.18)',
     borderRadius: 20,
     paddingHorizontal: 12,
     paddingVertical: 6,
   },
-  logoutText: { color: colors.white, fontSize: 12, fontWeight: '700' },
+  menuBtnText: { color: colors.white, fontSize: 18, fontWeight: '700' },
+
+  menuSheet: {
+    position: 'absolute',
+    top: 60,
+    right: 16,
+    backgroundColor: colors.white,
+    borderRadius: 14,
+    overflow: 'hidden',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    minWidth: 180,
+  },
+  menuItem: { paddingVertical: 16, paddingHorizontal: 20 },
+  menuItemText: { fontSize: 15, fontWeight: '700', color: '#1E293B' },
+  menuDivider: { height: 1, backgroundColor: '#F1F5F9' },
 
   content: { alignItems: 'center', padding: 16, gap: 16, paddingBottom: 8 },
+  topContent: { alignItems: 'center', padding: 16, gap: 12 },
 
   timeBadge: {
     backgroundColor: colors.primary,
@@ -366,7 +456,7 @@ const styles = StyleSheet.create({
   },
   timeBadgeText: { color: colors.white, fontWeight: '700', fontSize: 14 },
 
-  emojiBig: { fontSize: 88, lineHeight: 96 },
+  emojiBig: { fontSize: 80, lineHeight: 90 },
 
   currentCard: {
     backgroundColor: colors.white,
@@ -386,7 +476,8 @@ const styles = StyleSheet.create({
   currentTitle: { fontSize: 24, fontWeight: '900', color: colors.primary },
   currentTime: { fontSize: 14, color: '#94A3B8', fontWeight: '600' },
 
-  chatSection: { width: '100%', gap: 10 },
+  chatSection: { flex: 1, width: '100%' },
+  chatContent: { gap: 10, paddingVertical: 4 },
   chatBubbleRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
   chatBubbleRowUser: { justifyContent: 'flex-end' },
   chatAvatar: { fontSize: 24 },
@@ -489,15 +580,23 @@ const styles = StyleSheet.create({
   cellText: { fontSize: 10, fontWeight: '700', color: colors.primary, textAlign: 'center' },
   cellEmpty: { fontSize: 12, color: '#E2E8F0' },
 
+  chatBox: {
+    flex: 1,
+    backgroundColor: colors.white,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: -2 },
+  },
   inputBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    backgroundColor: colors.white,
-    borderTopWidth: 1,
-    borderTopColor: '#E2E8F0',
   },
   input: {
     flex: 1,
@@ -516,4 +615,41 @@ const styles = StyleSheet.create({
   },
   sendBtnDisabled: { backgroundColor: '#CBD5E1' },
   sendBtnText: { color: colors.white, fontWeight: '800', fontSize: 14 },
+
+  micBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  micBtnActive: {
+    backgroundColor: '#FEE2E2',
+  },
+  micBtnText: { fontSize: 20 },
+
+
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
+  modalSheet: {
+    backgroundColor: colors.white,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 40,
+  },
+  modalHandle: {
+    width: 40, height: 4, borderRadius: 2,
+    backgroundColor: '#E2E8F0',
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  modalTitle: { fontSize: 16, fontWeight: '800', color: colors.primary },
+  modalClose: { fontSize: 18, color: '#94A3B8', fontWeight: '600' },
 });
