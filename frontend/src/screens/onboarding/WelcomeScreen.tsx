@@ -22,7 +22,7 @@ type Props = {
 export default function WelcomeScreen({ navigation, route }: Props) {
   const {
     userName, guardianName, guardianPhone,
-    username, password, pins, schedules,
+    username, password, pins, schedules, themeColor,
   } = route.params;
 
   const slotToTime = (slot: number) => {
@@ -75,6 +75,7 @@ export default function WelcomeScreen({ navigation, route }: Props) {
         name: userName,
         disability_type: 'intellectual',
         disability_level: 'mild',
+        theme_color: themeColor ?? '#3B4A6B',
         guardian: {
           name: guardianName,
           phone: guardianPhone,
@@ -85,6 +86,7 @@ export default function WelcomeScreen({ navigation, route }: Props) {
       const userId = res.data.id;
       await AsyncStorage.setItem('user_id', String(userId));
       await AsyncStorage.setItem('role', 'guardian');
+      await AsyncStorage.setItem('theme_color', themeColor ?? '#3B4A6B');
 
       // 2. PIN 설정
       await api.post(`/users/${userId}/pins`, pins);

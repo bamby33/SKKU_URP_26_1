@@ -37,6 +37,7 @@ type SignupBase = {
   gender: string;
   likes: string[];
   dislikes: string[];
+  themeColor: string;
   schedules: ScheduleParam[];
 };
 

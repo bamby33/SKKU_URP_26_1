@@ -27,6 +27,7 @@ class UserCreate(BaseModel):
     disability_type: DisabilityType
     disability_level: DisabilityLevel
     special_notes: str | None = None
+    theme_color: str = "#3B4A6B"
     guardian: GuardianCreate
 
 
@@ -37,6 +38,7 @@ class UserResponse(BaseModel):
     disability_level: str
     special_notes: str | None
     feedback_mode: str
+    theme_color: str
 
     class Config:
         from_attributes = True
@@ -52,6 +54,7 @@ def create_user(data: UserCreate, db: Session = Depends(get_db)):
         disability_type=data.disability_type,
         disability_level=data.disability_level,
         special_notes=data.special_notes,
+        theme_color=data.theme_color,
     )
     db.add(user)
     db.flush()

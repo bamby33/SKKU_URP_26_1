@@ -43,12 +43,22 @@ def send_message(data: ChatRequest, db: Session = Depends(get_db)):
         for row in reversed(history_rows)
     ]
 
+    # 사용자 프로필 구성
+    user_profile = {
+        "name": user.name,
+        "disability_type": user.disability_type.value if user.disability_type else None,
+        "disability_level": user.disability_level.value if user.disability_level else None,
+        "special_notes": user.special_notes or "",
+        "feedback_mode": user.feedback_mode or "voice",
+    }
+
     # AI 에이전트 호출
     result = agent_chat(
         user_id=data.user_id,
         message=data.message,
         history=history,
-        context=data.context
+        context=data.context,
+        user_profile=user_profile,
     )
 
     # 대화 기록 저장

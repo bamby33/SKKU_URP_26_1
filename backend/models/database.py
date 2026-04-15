@@ -58,6 +58,7 @@ class User(Base):
     disability_level = Column(Enum(DisabilityLevel), nullable=False)
     special_notes = Column(Text, nullable=True)          # 특이사항 (보호자 입력)
     feedback_mode = Column(String, default="auto")       # auto | text | voice | button
+    theme_color = Column(String, default="#3B4A6B")      # 당사자 테마 색
     created_at = Column(DateTime, default=datetime.utcnow)
 
     guardian = relationship("Guardian", back_populates="user", uselist=False)

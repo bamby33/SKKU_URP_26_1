@@ -35,12 +35,7 @@ type ChatMessage = {
 };
 
 const DAY_LABELS = ['월', '화', '수', '목', '금', '토', '일'];
-const MEAL_KEYWORDS = ['밥 먹을 시간', '식사 시간', '밥 먹자', '식사해요', '식사할', '아침', '점심', '저녁'];
 const SLEEP_KEYWORDS = ['취침', '수면', '자기', '잠자기', '잠'];
-
-function isMealAlert(text: string): boolean {
-  return MEAL_KEYWORDS.some(kw => text.includes(kw));
-}
 
 function isSleepSchedule(title: string): boolean {
   return SLEEP_KEYWORDS.some(kw => title.includes(kw));
@@ -55,9 +50,15 @@ function getTodayIndex(): number {
   return (new Date().getDay() + 6) % 7;
 }
 
+const DRAWER_WIDTH = 260;
+
 export default function ScheduleScreen({ navigation }: Props) {
   const scrollRef = useRef<ScrollView>(null);
   const bounceAnim = useRef(new Animated.Value(0)).current;
+  const drawerAnim = useRef(new Animated.Value(DRAWER_WIDTH)).current;
+  const announcedRef = useRef<Set<number>>(new Set());
+  const snoozeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const todaySchedulesRef = useRef<Schedule[]>([]);
 
   const [userId, setUserId] = useState<number | null>(null);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
@@ -69,6 +70,18 @@ export default function ScheduleScreen({ navigation }: Props) {
   const [showSchedule, setShowSchedule] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [pendingSchedule, setPendingSchedule] = useState<Schedule | null>(null);
+  const [themeColor, setThemeColor] = useState(colors.primary);
+
+  const openDrawer = () => {
+    setShowMenu(true);
+    Animated.timing(drawerAnim, { toValue: 0, duration: 260, useNativeDriver: true }).start();
+  };
+  const closeDrawer = () => {
+    Animated.timing(drawerAnim, { toValue: DRAWER_WIDTH, duration: 220, useNativeDriver: true }).start(
+      () => setShowMenu(false)
+    );
+  };
 
   // 음성 인식 이벤트
   useSpeechRecognitionEvent('start', () => setIsListening(true));
@@ -112,14 +125,61 @@ export default function ScheduleScreen({ navigation }: Props) {
     }
   }
 
-  // 마지막 AI 메시지가 식사 알림이면 버튼 표시
-  const lastAiMsg = [...messages].reverse().find(m => m.role === 'assistant');
-  const showActionButtons = lastAiMsg ? isMealAlert(lastAiMsg.content) : false;
+  // todaySchedules ref 동기화 (interval 클로저에서 최신값 참조)
+  todaySchedulesRef.current = todaySchedules;
 
   useEffect(() => {
     const show = Keyboard.addListener('keyboardDidShow', e => setKeyboardHeight(e.endCoordinates.height));
     const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardHeight(0));
     return () => { show.remove(); hide.remove(); };
+  }, []);
+
+  // 스케줄 알림 함수
+  const announceSchedule = (schedule: Schedule) => {
+    const emoji = extractEmoji(schedule.title);
+    const msg = `${emoji} ${schedule.title} 시간이에요! 지금 할 준비가 됐나요?`;
+    setMessages(prev => [...prev, { id: Date.now(), role: 'assistant', content: msg }]);
+    Speech.speak(msg, { language: 'ko-KR' });
+    setPendingSchedule(schedule);
+  };
+
+  const handleConfirm = () => {
+    setPendingSchedule(null);
+    if (snoozeRef.current) clearTimeout(snoozeRef.current);
+    setMessages(prev => [...prev, { id: Date.now(), role: 'user', content: '알겠어요!' }]);
+    const reply = '잘했어요! 👍 파이팅!';
+    setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: reply }]);
+    Speech.speak(reply, { language: 'ko-KR' });
+  };
+
+  const handleSnooze = () => {
+    const saved = pendingSchedule;
+    setPendingSchedule(null);
+    setMessages(prev => [...prev, { id: Date.now(), role: 'user', content: '조금 이따가 할래요' }]);
+    const reply = '알겠어요! 3분 뒤에 다시 알려드릴게요 😊';
+    setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: reply }]);
+    Speech.speak(reply, { language: 'ko-KR' });
+    if (snoozeRef.current) clearTimeout(snoozeRef.current);
+    snoozeRef.current = setTimeout(() => {
+      if (saved) announceSchedule(saved);
+    }, 3 * 60 * 1000);
+  };
+
+  // 스케줄 시간 감지 interval (30초마다 체크)
+  useEffect(() => {
+    const check = () => {
+      const n = new Date();
+      const t = `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`;
+      const due = todaySchedulesRef.current.find(
+        s => s.scheduled_time === t && !announcedRef.current.has(s.id)
+      );
+      if (due) {
+        announcedRef.current.add(due.id);
+        announceSchedule(due);
+      }
+    };
+    const interval = setInterval(check, 30000);
+    return () => { clearInterval(interval); if (snoozeRef.current) clearTimeout(snoozeRef.current); };
   }, []);
 
   useEffect(() => {
@@ -139,6 +199,10 @@ export default function ScheduleScreen({ navigation }: Props) {
         if (!stored) return;
         const id = Number(stored);
         setUserId(id);
+
+        // 테마 색 로드
+        const savedColor = await AsyncStorage.getItem('theme_color');
+        if (savedColor) setThemeColor(savedColor);
 
         // 스케줄 + 채팅 기록 병렬 로드
         const [scheduleRes, historyRes] = await Promise.all([
@@ -221,14 +285,14 @@ export default function ScheduleScreen({ navigation }: Props) {
   return (
     <SafeAreaView style={styles.container}>
       {/* 헤더: 다음 일과 + 메뉴 */}
-      <View style={styles.header}>
+      <View style={[styles.header, { backgroundColor: themeColor }]}>
         <View style={styles.headerLeft}>
           <Text style={styles.nextLabel}>다음 일과</Text>
           <Text style={styles.nextText}>
             {nextSchedule ? `${nextSchedule.scheduled_time} ${nextSchedule.title}` : '오늘 일과 없음'}
           </Text>
         </View>
-        <TouchableOpacity style={styles.menuBtn} onPress={() => setShowMenu(true)} activeOpacity={0.75}>
+        <TouchableOpacity style={styles.menuBtn} onPress={openDrawer} activeOpacity={0.75}>
           <Text style={styles.menuBtnText}>☰</Text>
         </TouchableOpacity>
       </View>
@@ -240,9 +304,28 @@ export default function ScheduleScreen({ navigation }: Props) {
             {effectiveCurrent ? extractEmoji(effectiveCurrent.title) : '📋'}
           </Animated.Text>
           <View style={styles.currentCard}>
-            <Text style={styles.currentLabel}>지금 할 일이에요!</Text>
-            <Text style={styles.currentTitle}>{effectiveCurrent?.title ?? '일과를 확인 중이에요'}</Text>
+            <Text style={[styles.currentLabel, { color: themeColor }]}>지금 할 일이에요!</Text>
+            <Text style={[styles.currentTitle, { color: themeColor }]}>{effectiveCurrent?.title ?? '일과를 확인 중이에요'}</Text>
             <Text style={styles.currentTime}>{effectiveCurrent?.scheduled_time ?? ''}</Text>
+          </View>
+          {/* 임시 테스트 버튼 */}
+          <TouchableOpacity onPress={() => announceSchedule({ id: 9999, title: '🧪 테스트 알림', scheduled_time: '14:15', days_of_week: '2' })}
+            style={{ backgroundColor: '#FEF3C7', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 16, marginBottom: 4 }}>
+            <Text style={{ color: '#92400E', fontWeight: '700', fontSize: 13 }}>⚙️ 알림 테스트</Text>
+          </TouchableOpacity>
+
+          {/* 연락 버튼 */}
+          <View style={styles.contactRow}>
+            <TouchableOpacity style={[styles.contactBtn, { borderColor: themeColor + '55', backgroundColor: themeColor + '12' }]} activeOpacity={0.8}
+              onPress={() => Alert.alert('보호자 연락', '보호자에게 연락합니다.')}>
+              <Text style={styles.contactIcon}>👨‍👩‍👧</Text>
+              <Text style={[styles.contactText, { color: themeColor }]}>보호자에게{'\n'}연락하기</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.contactBtn, { borderColor: themeColor + '55', backgroundColor: themeColor + '12' }]} activeOpacity={0.8}
+              onPress={() => Alert.alert('기관 연락', '기관에 연락합니다.')}>
+              <Text style={styles.contactIcon}>🏢</Text>
+              <Text style={[styles.contactText, { color: themeColor }]}>기관에{'\n'}연락하기</Text>
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -269,7 +352,7 @@ export default function ScheduleScreen({ navigation }: Props) {
                 style={[styles.chatBubbleRow, msg.role === 'user' && styles.chatBubbleRowUser]}
               >
                 {msg.role === 'assistant' && <Text style={styles.chatAvatar}>🤖</Text>}
-                <View style={[styles.chatBubble, msg.role === 'user' && styles.chatBubbleUser]}>
+                <View style={[styles.chatBubble, msg.role === 'user' && { ...styles.chatBubbleUser, backgroundColor: themeColor }]}>
                   <Text style={[styles.chatText, msg.role === 'user' && styles.chatTextUser]}>
                     {msg.content}
                   </Text>
@@ -280,22 +363,22 @@ export default function ScheduleScreen({ navigation }: Props) {
               <View style={styles.chatBubbleRow}>
                 <Text style={styles.chatAvatar}>🤖</Text>
                 <View style={styles.chatBubble}>
-                  <ActivityIndicator size="small" color={colors.primary} />
+                  <ActivityIndicator size="small" color={themeColor} />
                 </View>
               </View>
             )}
           </ScrollView>
 
-          {/* 식사 알림 시 행동 버튼 */}
-          {showActionButtons && (
+          {/* 스케줄 알림 행동 버튼 */}
+          {pendingSchedule && (
             <View style={styles.actionRow}>
-              <TouchableOpacity style={styles.btnOk} onPress={() => handleSend()} activeOpacity={0.85}>
+              <TouchableOpacity style={[styles.btnOk, { backgroundColor: themeColor }]} onPress={handleConfirm} activeOpacity={0.85}>
                 <Text style={styles.btnOkEmoji}>✅</Text>
                 <Text style={styles.btnOkText}>알겠어요!</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.btnLater} activeOpacity={0.85}>
+              <TouchableOpacity style={styles.btnLater} onPress={handleSnooze} activeOpacity={0.85}>
                 <Text style={styles.btnLaterEmoji}>⏱</Text>
-                <Text style={styles.btnLaterText}>3분 뒤에</Text>
+                <Text style={styles.btnLaterText}>조금 이따가</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -314,13 +397,13 @@ export default function ScheduleScreen({ navigation }: Props) {
               value={inputText}
               onChangeText={setInputText}
               placeholder={isListening ? '듣고 있어요…' : 'AI에게 말해보세요…'}
-              placeholderTextColor={isListening ? colors.primary : '#94A3B8'}
+              placeholderTextColor={isListening ? themeColor : '#94A3B8'}
               returnKeyType="send"
               onSubmitEditing={() => handleSend()}
               editable={!aiLoading && !isListening}
             />
             <TouchableOpacity
-              style={[styles.sendBtn, (!inputText.trim() || aiLoading) && styles.sendBtnDisabled]}
+              style={[styles.sendBtn, { backgroundColor: themeColor }, (!inputText.trim() || aiLoading) && styles.sendBtnDisabled]}
               onPress={() => handleSend()}
               disabled={!inputText.trim() || aiLoading}
               activeOpacity={0.8}
@@ -330,18 +413,29 @@ export default function ScheduleScreen({ navigation }: Props) {
           </View>
         </View>
 
-        {/* 메뉴 모달 */}
-        <Modal visible={showMenu} animationType="fade" transparent onRequestClose={() => setShowMenu(false)}>
-          <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowMenu(false)} />
-          <View style={styles.menuSheet}>
-            <TouchableOpacity style={styles.menuItem} onPress={() => { setShowMenu(false); setShowSchedule(true); }} activeOpacity={0.8}>
-              <Text style={styles.menuItemText}>📅 일주일 스케줄</Text>
+        {/* 사이드 드로어 */}
+        <Modal visible={showMenu} animationType="none" transparent onRequestClose={closeDrawer}>
+          <TouchableOpacity style={styles.drawerOverlay} activeOpacity={1} onPress={closeDrawer} />
+          <Animated.View style={[styles.drawer, { transform: [{ translateX: drawerAnim }] }]}>
+            <View style={styles.drawerHeader}>
+              <Text style={styles.drawerTitle}>메뉴</Text>
+              <TouchableOpacity onPress={closeDrawer} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+                <Text style={styles.drawerClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.drawerDivider} />
+            <TouchableOpacity style={styles.drawerItem} activeOpacity={0.7}
+              onPress={() => { closeDrawer(); setTimeout(() => setShowSchedule(true), 240); }}>
+              <Text style={styles.drawerItemIcon}>📅</Text>
+              <Text style={styles.drawerItemText}>일주일 스케줄</Text>
             </TouchableOpacity>
-            <View style={styles.menuDivider} />
-            <TouchableOpacity style={styles.menuItem} onPress={() => { setShowMenu(false); handleLogout(); }} activeOpacity={0.8}>
-              <Text style={[styles.menuItemText, { color: '#EF4444' }]}>🚪 로그아웃</Text>
+            <View style={styles.drawerDivider} />
+            <TouchableOpacity style={styles.drawerItem} activeOpacity={0.7}
+              onPress={() => { closeDrawer(); setTimeout(handleLogout, 240); }}>
+              <Text style={styles.drawerItemIcon}>🚪</Text>
+              <Text style={[styles.drawerItemText, { color: '#C9303F' }]}>로그아웃</Text>
             </TouchableOpacity>
-          </View>
+          </Animated.View>
         </Modal>
 
         {/* 일주일 스케줄 모달 */}
@@ -427,23 +521,51 @@ const styles = StyleSheet.create({
   },
   menuBtnText: { color: colors.white, fontSize: 18, fontWeight: '700' },
 
-  menuSheet: {
-    position: 'absolute',
-    top: 60,
-    right: 16,
-    backgroundColor: colors.white,
-    borderRadius: 14,
-    overflow: 'hidden',
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    minWidth: 180,
+  // 사이드 드로어
+  drawerOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.35)',
   },
-  menuItem: { paddingVertical: 16, paddingHorizontal: 20 },
-  menuItemText: { fontSize: 15, fontWeight: '700', color: '#1E293B' },
-  menuDivider: { height: 1, backgroundColor: '#F1F5F9' },
+  drawer: {
+    position: 'absolute', top: 0, right: 0, bottom: 0,
+    width: DRAWER_WIDTH,
+    backgroundColor: colors.white,
+    paddingTop: 56,
+    elevation: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 16,
+    shadowOffset: { width: -4, height: 0 },
+  },
+  drawerHeader: {
+    flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20, paddingBottom: 16,
+  },
+  drawerTitle: { fontSize: 18, fontWeight: '800', color: colors.text },
+  drawerClose: { fontSize: 18, color: colors.textMuted },
+  drawerDivider: { height: 1, backgroundColor: colors.border, marginHorizontal: 0 },
+  drawerItem: {
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    paddingVertical: 18, paddingHorizontal: 20,
+  },
+  drawerItemIcon: { fontSize: 20 },
+  drawerItemText: { fontSize: 16, fontWeight: '600', color: colors.text },
+
+  // 연락 버튼
+  contactRow: { flexDirection: 'row', gap: 10, width: '100%' },
+  contactBtn: {
+    flex: 1, backgroundColor: colors.primaryBg,
+    borderRadius: 14, paddingVertical: 14,
+    alignItems: 'center', gap: 6,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  contactBtnAlt: {
+    backgroundColor: '#EEF7F2',
+    borderColor: '#C3DDD1',
+  },
+  contactIcon: { fontSize: 22 },
+  contactText: { fontSize: 13, fontWeight: '700', color: colors.primary, textAlign: 'center', lineHeight: 18 },
 
   content: { alignItems: 'center', padding: 16, gap: 16, paddingBottom: 8 },
   topContent: { alignItems: 'center', padding: 16, gap: 12 },

@@ -12,6 +12,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
+import { THEME_PALETTE, DEFAULT_THEME_COLOR } from '../../theme/palette';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Preferences'>;
@@ -28,6 +29,7 @@ export default function PreferencesScreen({ navigation, route }: Props) {
   const [dislikes, setDislikes] = useState<string[]>([]);
   const [likeInput, setLikeInput] = useState('');
   const [dislikeInput, setDislikeInput] = useState('');
+  const [themeColor, setThemeColor] = useState(DEFAULT_THEME_COLOR.color);
 
   const addTag = (
     input: string,
@@ -59,7 +61,7 @@ export default function PreferencesScreen({ navigation, route }: Props) {
   };
 
   const handleNext = () => {
-    navigation.navigate('ScheduleSetup', { userName, age, gender, likes, dislikes });
+    navigation.navigate('ScheduleSetup', { userName, age, gender, likes, dislikes, themeColor, schedules: [] });
   };
 
   return (
@@ -88,6 +90,29 @@ export default function PreferencesScreen({ navigation, route }: Props) {
             <Text style={styles.emoji}>💝</Text>
             <Text style={styles.title}>{userName}의{'\n'}특성을 알려주세요</Text>
             <Text style={styles.subtitle}>AI가 더 잘 도와줄 수 있어요</Text>
+          </View>
+
+          {/* 좋아하는 색 */}
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionEmoji}>🎨</Text>
+              <Text style={styles.sectionTitle}>좋아하는 색</Text>
+            </View>
+            <View style={styles.colorRow}>
+              {THEME_PALETTE.map((p) => (
+                <TouchableOpacity
+                  key={p.key}
+                  style={[styles.colorSwatch, { backgroundColor: p.color }, themeColor === p.color && styles.colorSwatchSelected]}
+                  onPress={() => setThemeColor(p.color)}
+                  activeOpacity={0.8}
+                >
+                  {themeColor === p.color && <Text style={styles.colorCheck}>✓</Text>}
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={styles.colorLabel}>
+              {THEME_PALETTE.find(p => p.color === themeColor)?.label ?? ''}
+            </Text>
           </View>
 
           {/* 좋아하는 것 */}
@@ -267,6 +292,19 @@ const styles = StyleSheet.create({
   sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   sectionEmoji: { fontSize: 22 },
   sectionTitle: { fontSize: 15, fontWeight: '800', color: colors.primary },
+
+  colorRow: { flexDirection: 'row', gap: 12, flexWrap: 'wrap' },
+  colorSwatch: {
+    width: 44, height: 44, borderRadius: 22,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  colorSwatchSelected: {
+    borderWidth: 3, borderColor: '#fff',
+    shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 }, elevation: 5,
+  },
+  colorCheck: { color: '#fff', fontSize: 18, fontWeight: '900' },
+  colorLabel: { fontSize: 13, color: colors.textSub, fontWeight: '600', marginTop: -4 },
 
   suggestions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   suggestionChip: {

@@ -69,7 +69,7 @@ function clamp(v: number, lo: number, hi: number) {
 
 // ── 컴포넌트 ──────────────────────────────────────────────────────────────────
 export default function ScheduleSetupScreen({ navigation, route }: Props) {
-  const { userName, age, gender, likes, dislikes } = route.params;
+  const { userName, age, gender, likes, dislikes, themeColor } = route.params;
 
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [scrollEnabled, setScrollEnabled] = useState(true);
@@ -162,7 +162,7 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
       emoji: b.emoji,
       color: b.color,
     }));
-    navigation.navigate('AccountSetup', { userName, age, gender, likes, dislikes, schedules });
+    navigation.navigate('AccountSetup', { userName, age, gender, likes, dislikes, themeColor, schedules });
   };
 
   // 시간 레이블 (1시간마다)
