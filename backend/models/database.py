@@ -117,14 +117,31 @@ class BehaviorLog(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
+    schedule_id = Column(Integer, ForeignKey("schedules.id"), nullable=True)  # 어떤 일과 중 발생했는지
     stage = Column(Enum(FeedbackStage), nullable=False)
     trigger = Column(String, nullable=True)             # 감지 방식 (voice/gps/manual)
     decibel_level = Column(Float, nullable=True)        # 음성 데시벨
     ai_response = Column(Text, nullable=True)           # AI가 한 말
     guardian_notified = Column(Boolean, default=False)
+    is_read = Column(Boolean, default=False)            # 보호자가 확인했는지
     logged_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="behavior_logs")
+
+
+class DailyReport(Base):
+    """일일 일과 종료 후 AI 분석 리포트"""
+    __tablename__ = "daily_reports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    report_date = Column(String, nullable=False)        # "YYYY-MM-DD"
+    ai_summary = Column(Text, nullable=True)            # AI 3-4문장 분석
+    achieved = Column(Integer, default=0)
+    total = Column(Integer, default=0)
+    is_complete = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
 
 
 class UserPIN(Base):

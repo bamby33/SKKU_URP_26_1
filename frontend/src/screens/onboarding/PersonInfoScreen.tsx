@@ -17,22 +17,29 @@ type Props = {
 };
 
 const GENDERS = [
-  { key: 'male', label: '남성', emoji: '👦' },
+  { key: 'male',   label: '남성', emoji: '👦' },
   { key: 'female', label: '여성', emoji: '👧' },
 ];
 
-export default function PersonInfoScreen({ navigation }: Props) {
-  const [name, setName] = useState('');
-  const [age, setAge] = useState('');
-  const [gender, setGender] = useState<string | null>(null);
+const DISABILITY_TYPES = [
+  { key: 'intellectual', label: '지적 장애' },
+  { key: 'autism',       label: '자폐 장애' },
+];
 
-  const canNext = name.trim().length > 0 && age.trim().length > 0 && gender !== null;
+export default function PersonInfoScreen({ navigation }: Props) {
+  const [name,           setName]           = useState('');
+  const [age,            setAge]            = useState('');
+  const [gender,         setGender]         = useState<string | null>(null);
+  const [disabilityType, setDisabilityType] = useState<string | null>(null);
+
+  const canNext = name.trim().length > 0 && age.trim().length > 0 && gender !== null && disabilityType !== null;
 
   const handleNext = () => {
     navigation.navigate('Preferences', {
       userName: name.trim(),
       age: age.trim(),
       gender: gender!,
+      disabilityType: disabilityType!,
     });
   };
 
@@ -110,6 +117,25 @@ export default function PersonInfoScreen({ navigation }: Props) {
                   <Text style={styles.genderEmoji}>{g.emoji}</Text>
                   <Text style={[styles.genderLabel, gender === g.key && styles.genderLabelSelected]}>
                     {g.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          {/* 장애 유형 */}
+          <View style={styles.fieldGroup}>
+            <Text style={styles.fieldLabel}>장애 유형</Text>
+            <View style={styles.disabilityRow}>
+              {DISABILITY_TYPES.map((d) => (
+                <TouchableOpacity
+                  key={d.key}
+                  style={[styles.disabilityBtn, disabilityType === d.key && styles.disabilityBtnSelected]}
+                  onPress={() => setDisabilityType(d.key)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.disabilityLabel, disabilityType === d.key && styles.disabilityLabelSelected]}>
+                    {d.label}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -203,6 +229,19 @@ const styles = StyleSheet.create({
   genderEmoji: { fontSize: 26 },
   genderLabel: { fontSize: 13, fontWeight: '700', color: colors.primary },
   genderLabelSelected: { color: colors.white },
+
+  disabilityRow: { flexDirection: 'row', gap: 10 },
+  disabilityBtn: {
+    flex: 1, backgroundColor: colors.white, borderRadius: 16,
+    paddingVertical: 16, paddingHorizontal: 12, alignItems: 'center', gap: 6,
+    borderWidth: 2, borderColor: colors.border,
+  },
+  disabilityBtnSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
+  disabilityEmoji: { fontSize: 30 },
+  disabilityLabel: { fontSize: 14, fontWeight: '800', color: colors.primary },
+  disabilityLabelSelected: { color: colors.white },
+  disabilityDesc: { fontSize: 11, color: '#999', textAlign: 'center', lineHeight: 15 },
+  disabilityDescSelected: { color: 'rgba(255,255,255,0.8)' },
 
   nextBtn: {
     backgroundColor: colors.primary,

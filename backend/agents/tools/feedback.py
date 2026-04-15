@@ -50,60 +50,88 @@ TOOL_DEFINITION = {
 
 
 def _get_stage1_feedback(user: User, schedule_title: str = None) -> dict:
-    """1단계: 사전 신호 감지 시 피드백"""
+    """
+    1단계: 사전 신호 감지 시 피드백 (슬라이드 7 기준)
+    - 선택지 2개 제시 (둘 다 수용 가능)
+    - 과제 분할
+    - AAC 버튼 제공
+    """
     task = schedule_title or "지금 할 일"
 
     if user.disability_type == DisabilityType.AUTISM:
-        # 자폐: 구체적 선택지 + AAC 버튼
+        # 자폐: 예측 가능한 구체적 선택지 + AAC 버튼
         return {
             "message": f"지금 할까요, 3분 뒤에 할까요?",
             "choices": ["지금 할게요", "3분 뒤에 할게요"],
-            "aac_buttons": ["쉬고 싶어요", "도와주세요", "싫어요"],
+            "alternative_choice": f"세면대에서 할까요, 컵으로 할까요?",
             "task_breakdown": f"{task}의 첫 번째 단계만 해볼까요?",
-            "tone": "calm_simple"
+            "aac_buttons": ["쉬고 싶어요", "도와주세요", "싫어요"],
+            "tone": "calm_simple",
+            "notify_guardian": False
         }
     elif user.disability_level == DisabilityLevel.MILD:
-        # 경도 지적장애: 음성 + 선택지
+        # 경도 지적장애: 음성 + 선택지 2개
         return {
-            "message": f"{task}, 지금 할까요? 아니면 잠깐 쉬고 할까요?",
+            "message": f"지금 할까요, 잠깐 쉬고 할까요?",
             "choices": ["지금 할게요", "잠깐 쉴게요"],
+            "task_breakdown": f"{task} 중에서 한 가지만 먼저 해볼까요?",
             "aac_buttons": ["쉬고 싶어요", "도와주세요"],
-            "tone": "warm_voice"
+            "tone": "warm_voice",
+            "notify_guardian": False
         }
     else:
-        # 중도: 매우 단순한 메시지
+        # 중등도 이상: 매우 단순한 메시지 + 선택지
         return {
-            "message": f"{task} 할 시간이에요.",
-            "choices": ["네", "잠깐만요"],
+            "message": f"지금 할까요? 나중에 할까요?",
+            "choices": ["네", "나중에요"],
             "aac_buttons": ["싫어요", "도와주세요"],
-            "tone": "simple"
+            "tone": "simple",
+            "notify_guardian": False
         }
 
 
 def _get_stage2_feedback(user: User) -> dict:
-    """2단계: 문제 행동 중 피드백"""
+    """
+    2단계: 문제 행동 중 피드백 (슬라이드 7 기준)
+    - 낮고 일정한 톤으로 짧게 전달
+    - 다른 행동으로 전환 유도
+    - 보호자/기관 연락
+    """
     return {
         "message": "괜찮아요. 잠깐 쉬어요.",
-        "tone": "low_steady",           # 낮고 일정한 톤
-        "action": "redirect_behavior",  # 다른 행동으로 전환 유도
+        "tone": "low_steady",
+        "action": "redirect_behavior",
         "redirect_suggestion": "좋아하는 것을 잠깐 해볼까요?",
-        "notify_guardian": True         # 보호자에게 연락
+        "redirect_examples": ["음악 듣기", "좋아하는 영상 보기", "잠깐 산책"],
+        "notify_guardian": True,
+        "guardian_message": "사용자가 흥분 상태입니다. 확인이 필요할 수 있습니다."
     }
 
 
 def _get_stage3_feedback(user: User) -> dict:
-    """3단계: 진정 후 피드백"""
+    """
+    3단계: 진정 후 피드백 (슬라이드 7 기준)
+    - 즉시: 안전 점검
+    - 1시간 후: 상황 대화 (쉬운 질문 → 점차 심화)
+    - 사용자 성향 학습
+    """
     return {
-        "message": "다친 곳은 없나요?",
-        "followup_delay_minutes": 60,   # 1시간 뒤 대화
-        "followup_message": "아까 어떤 기분이었는지 이야기해볼까요?",
-        "questions": [
-            "오늘 힘든 게 있었나요?",
-            "무엇 때문에 힘들었나요?",
-            "다음엔 어떻게 하면 좋을까요?"
-        ],
+        "message": "몸에 다친 곳은 없나요?",
         "tone": "gentle",
-        "learn_tendency": True          # 사용자 성향 학습 플래그
+        "immediate_check": "몸에 다친 곳은 없나요?",
+        "followup_delay_minutes": 60,
+        "followup_message": "아까 어떤 기분이 들었는지 이야기해볼 수 있어요?",
+        "questions_easy": [
+            "오늘 힘든 게 있었나요?",
+            "뭔가 마음에 안 드는 게 있었나요?",
+        ],
+        "questions_deep": [
+            "무엇 때문에 힘들었나요?",
+            "그때 어떤 기분이었나요?",
+            "다음엔 어떻게 하면 좋을까요?",
+        ],
+        "notify_guardian": False,
+        "learn_tendency": True
     }
 
 

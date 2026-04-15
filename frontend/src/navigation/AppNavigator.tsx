@@ -35,6 +35,7 @@ type SignupBase = {
   userName: string;
   age: string;
   gender: string;
+  disabilityType: string;
   likes: string[];
   dislikes: string[];
   themeColor: string;
@@ -54,7 +55,7 @@ export type RootStackParamList = {
   PINLogin: undefined;
   Home: undefined;
   PersonInfo: undefined;
-  Preferences: { userName: string; age: string; gender: string };
+  Preferences: { userName: string; age: string; gender: string; disabilityType: string };
   ScheduleSetup: SignupBase;
   AccountSetup: SignupBase;
   PINSetup: AccountInfo;

@@ -81,6 +81,13 @@ def create_user(data: UserCreate, db: Session = Depends(get_db)):
     return user
 
 
+@router.get("/check-username/{username}")
+def check_username(username: str, db: Session = Depends(get_db)):
+    """아이디 중복 확인"""
+    exists = db.query(Guardian).filter(Guardian.username == username).first() is not None
+    return {"available": not exists}
+
+
 @router.get("/{user_id}", response_model=UserResponse)
 def get_user(user_id: int, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()

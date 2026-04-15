@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from models.database import init_db
-from routers import users, schedules, chat
+from routers import users, schedules, chat, guardian
 from scheduler.jobs import init_scheduler
 import logging
 
@@ -35,6 +35,7 @@ app.add_middleware(
 app.include_router(users.router)
 app.include_router(schedules.router)
 app.include_router(chat.router)
+app.include_router(guardian.router)
 
 
 @app.get("/")

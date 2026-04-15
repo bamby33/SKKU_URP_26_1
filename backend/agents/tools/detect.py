@@ -75,13 +75,27 @@ def detect_user_response(
                 feedback_stage = FeedbackStage.STAGE_1
                 trigger.append(f"voice:{decibel}dB")
 
-        # 2. 텍스트 거부 표현 감지 (간단 키워드)
-        refusal_keywords = ["싫어", "싫다", "안해", "안 해", "하기 싫어", "못해"]
-        if user_text and any(kw in user_text for kw in refusal_keywords):
-            if feedback_stage is None:
-                feedback_stage = FeedbackStage.STAGE_1
-                state = "alert"
-            trigger.append("text_refusal")
+        # 2. 텍스트 분석 — 1단계(사전신호) 키워드
+        stage1_keywords = [
+            "싫어", "싫다", "안해", "안 해", "하기 싫어", "못해",
+            "모르겠어", "몰라", "귀찮아", "안 할래", "하기 싫다"
+        ]
+        # 2단계(문제 행동) 키워드
+        stage2_keywords = [
+            "하기 싫다고", "왜 자꾸 시켜", "그만해", "시끄러워",
+            "하지 말라고", "짜증나", "그만", "저리 가"
+        ]
+        if user_text:
+            if any(kw in user_text for kw in stage2_keywords):
+                # 격한 표현 → 2단계
+                state = "agitated"
+                feedback_stage = FeedbackStage.STAGE_2
+                trigger.append("text_agitation")
+            elif any(kw in user_text for kw in stage1_keywords):
+                if feedback_stage is None or feedback_stage == FeedbackStage.STAGE_1:
+                    feedback_stage = FeedbackStage.STAGE_1
+                    state = "alert"
+                trigger.append("text_refusal")
 
         # 3. GPS 미이동 = 스케줄 미달성 신호
         schedule_missed = False

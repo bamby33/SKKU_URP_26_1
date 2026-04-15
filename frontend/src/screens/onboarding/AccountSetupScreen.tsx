@@ -12,6 +12,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
+import { api } from '../../api/client';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'AccountSetup'>;
@@ -27,6 +28,18 @@ export default function AccountSetupScreen({ navigation, route }: Props) {
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
   const [showPw, setShowPw] = useState(false);
+  const [usernameStatus, setUsernameStatus] = useState<'idle' | 'checking' | 'available' | 'taken'>('idle');
+
+  const checkUsername = async (value: string) => {
+    if (value.trim().length < 4) return;
+    setUsernameStatus('checking');
+    try {
+      const res = await api.get(`/users/check-username/${value.trim()}`);
+      setUsernameStatus(res.data.available ? 'available' : 'taken');
+    } catch {
+      setUsernameStatus('idle');
+    }
+  };
 
   const passwordMatch = password === passwordConfirm;
   const canNext =
@@ -34,7 +47,8 @@ export default function AccountSetupScreen({ navigation, route }: Props) {
     guardianPhone.trim().length >= 10 &&
     username.trim().length >= 4 &&
     password.length >= 6 &&
-    passwordMatch;
+    passwordMatch &&
+    usernameStatus === 'available';
 
   const handleNext = () => {
     navigation.navigate('PINSetup', {
@@ -106,16 +120,33 @@ export default function AccountSetupScreen({ navigation, route }: Props) {
           <View style={styles.fieldGroup}>
             <Text style={styles.fieldLabel}>아이디</Text>
             <TextInput
-              style={styles.input}
+              style={[
+                styles.input,
+                usernameStatus === 'taken' && styles.inputError,
+                usernameStatus === 'available' && styles.inputSuccess,
+              ]}
               placeholder="영문·숫자 4자 이상"
               placeholderTextColor="#bbb"
               value={username}
-              onChangeText={(t) => setUsername(t.replace(/[^a-zA-Z0-9_]/g, ''))}
+              onChangeText={(t) => {
+                setUsername(t.replace(/[^a-zA-Z0-9_]/g, ''));
+                setUsernameStatus('idle');
+              }}
+              onBlur={() => checkUsername(username)}
               autoCapitalize="none"
               returnKeyType="next"
             />
             {username.length > 0 && username.length < 4 && (
               <Text style={styles.errorText}>4자 이상 입력해주세요</Text>
+            )}
+            {usernameStatus === 'checking' && (
+              <Text style={styles.checkingText}>확인 중...</Text>
+            )}
+            {usernameStatus === 'taken' && (
+              <Text style={styles.errorText}>이미 사용 중인 아이디예요</Text>
+            )}
+            {usernameStatus === 'available' && (
+              <Text style={styles.successText}>✓ 사용 가능한 아이디예요</Text>
             )}
           </View>
 
@@ -213,6 +244,8 @@ const styles = StyleSheet.create({
     borderWidth: 2, borderColor: colors.border,
   },
   inputError: { borderColor: colors.alertLight },
+  inputSuccess: { borderColor: colors.success },
+  checkingText: { fontSize: 12, color: '#aaa' },
   pwWrap: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   eyeBtn: {
     width: 48, height: 52, alignItems: 'center', justifyContent: 'center',

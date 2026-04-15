@@ -22,7 +22,7 @@ type Props = {
 export default function WelcomeScreen({ navigation, route }: Props) {
   const {
     userName, guardianName, guardianPhone,
-    username, password, pins, schedules, themeColor,
+    username, password, pins, schedules, themeColor, disabilityType,
   } = route.params;
 
   const slotToTime = (slot: number) => {
@@ -73,7 +73,7 @@ export default function WelcomeScreen({ navigation, route }: Props) {
       // 1. 사용자 + 보호자 회원가입
       const res = await api.post('/users/', {
         name: userName,
-        disability_type: 'intellectual',
+        disability_type: disabilityType,
         disability_level: 'mild',
         theme_color: themeColor ?? '#3B4A6B',
         guardian: {
