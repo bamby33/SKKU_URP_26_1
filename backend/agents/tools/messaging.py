@@ -112,8 +112,8 @@ def send_message(
 
         # 실제 발신 대신 콘솔 출력 (SMS/Push 연동 전)
         print(f"\n{'='*50}")
-        print(f"📱 → {guardian_contact}")
-        print(content)
+        print(f"  [MESSAGE] -> {guardian_contact}")
+        print(f"  {content}")
         print(f"{'='*50}\n")
 
         return {

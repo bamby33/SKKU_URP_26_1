@@ -22,6 +22,7 @@ class ChatResponse(BaseModel):
     reply: str
     tool_calls: list
     stage: str | None
+    feedback: dict | None = None
 
 
 # ── REST endpoint ──────────────────────────────────────────────────────────────
@@ -53,13 +54,22 @@ def send_message(data: ChatRequest, db: Session = Depends(get_db)):
     }
 
     # AI 에이전트 호출
-    result = agent_chat(
-        user_id=data.user_id,
-        message=data.message,
-        history=history,
-        context=data.context,
-        user_profile=user_profile,
-    )
+    try:
+        result = agent_chat(
+            user_id=data.user_id,
+            message=data.message,
+            history=history,
+            context=data.context,
+            user_profile=user_profile,
+        )
+    except Exception as e:
+        err = str(e)
+        if "429" in err or "RESOURCE_EXHAUSTED" in err:
+            result = {"reply": "잠깐만요, AI가 잠시 바빠요. 조금 뒤에 다시 말해주세요 😊", "tool_calls": [], "stage": None, "feedback": None}
+        elif "503" in err or "UNAVAILABLE" in err:
+            result = {"reply": "AI 서버가 잠시 불안정해요. 곧 다시 연결할게요 😊", "tool_calls": [], "stage": None, "feedback": None}
+        else:
+            raise
 
     # 대화 기록 저장
     db.add(ChatMessage(user_id=data.user_id, role="user", content=data.message))

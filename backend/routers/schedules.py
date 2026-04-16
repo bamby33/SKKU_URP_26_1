@@ -59,6 +59,22 @@ def delete_schedule(schedule_id: int, db: Session = Depends(get_db)):
     return {"success": True}
 
 
+class ScheduleCheckRequest(BaseModel):
+    schedule_id: int
+    achieved: bool
+    note: str | None = None
+
+
+@router.post("/check")
+def check_schedule_direct(data: ScheduleCheckRequest, db: Session = Depends(get_db)):
+    """스케줄 달성 여부 직접 기록 (AI 툴 우회 REST 엔드포인트)"""
+    from agents.tools.schedule_check import check_schedule
+    result = check_schedule(data.schedule_id, data.achieved, data.note)
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("error", "스케줄을 찾을 수 없습니다."))
+    return result
+
+
 @router.get("/user/{user_id}/today-report")
 def get_today_report(user_id: int, db: Session = Depends(get_db)):
     """오늘 스케줄 달성 현황"""

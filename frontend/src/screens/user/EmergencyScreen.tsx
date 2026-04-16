@@ -8,11 +8,13 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Emergency'>;
+  route: RouteProp<RootStackParamList, 'Emergency'>;
 };
 
 const OPTIONS = [
@@ -24,8 +26,45 @@ const OPTIONS = [
 
 const STAGES = ['지나감', '지금', '이후'];
 
-export default function EmergencyScreen({ navigation }: Props) {
-  const [currentStage] = useState(1); // 0=stage1 지남, 1=stage2 현재, 2=stage3 이후
+const STAGE_CONFIG = {
+  stage_1: {
+    stageIndex: 0,
+    headerEmoji: '💛',
+    headerTitle: '잠깐, 좀 힘든가요?',
+    headerSub: 'AI가 도와줄게요',
+    headerBg: '#F59E0B',
+    calmEmoji: '🌿',
+    calmTitle: '잠깐 쉬어도 괜찮아요',
+    calmSub: '지금 당장 안 해도 돼요.\n편한 방법으로 해볼까요?',
+    stageLabel: '지금 단계 1 → 잠깐 힘든 것 같아요',
+  },
+  stage_2: {
+    stageIndex: 1,
+    headerEmoji: '🤗',
+    headerTitle: '괜찮아요, 진정해봐요',
+    headerSub: 'AI가 도와줄게요',
+    headerBg: colors.alert,
+    calmEmoji: '🌬️',
+    calmTitle: '천천히 숨을 쉬어봐요',
+    calmSub: '코로 깊게 들이쉬고…\n입으로 천천히 내쉬어요',
+    stageLabel: '지금 단계 2 → 흥분 상태예요',
+  },
+  stage_3: {
+    stageIndex: 2,
+    headerEmoji: '😌',
+    headerTitle: '많이 진정됐어요',
+    headerSub: '잘 했어요, 대화해볼까요?',
+    headerBg: '#2D6A4F',
+    calmEmoji: '💙',
+    calmTitle: '몸에 다친 곳은 없나요?',
+    calmSub: '아까 어떤 기분이었는지\n이야기해줄 수 있어요?',
+    stageLabel: '단계 3 → 진정 후',
+  },
+};
+
+export default function EmergencyScreen({ navigation, route }: Props) {
+  const stage = route.params?.stage ?? 'stage_2';
+  const config = STAGE_CONFIG[stage];
   const [listening, setListening] = useState(true);
 
   const handleCallGuardian = () => {
@@ -37,15 +76,15 @@ export default function EmergencyScreen({ navigation }: Props) {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* 경고 헤더 */}
-      <View style={styles.alertHeader}>
+      {/* 단계별 헤더 */}
+      <View style={[styles.alertHeader, { backgroundColor: config.headerBg }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Text style={styles.backText}>←</Text>
         </TouchableOpacity>
         <View style={styles.alertCenter}>
-          <Text style={styles.alertEmoji}>🤗</Text>
-          <Text style={styles.alertTitle}>괜찮아요, 진정해봐요</Text>
-          <Text style={styles.alertSub}>AI가 도와줄게요 💙</Text>
+          <Text style={styles.alertEmoji}>{config.headerEmoji}</Text>
+          <Text style={styles.alertTitle}>{config.headerTitle}</Text>
+          <Text style={styles.alertSub}>{config.headerSub}</Text>
         </View>
       </View>
 
@@ -57,23 +96,20 @@ export default function EmergencyScreen({ navigation }: Props) {
               key={i}
               style={[
                 styles.stageDot,
-                i < currentStage && styles.stageDotPassed,
-                i === currentStage && styles.stageDotActive,
-                i > currentStage && styles.stageDotUpcoming,
+                i < config.stageIndex && styles.stageDotPassed,
+                i === config.stageIndex && styles.stageDotActive,
+                i > config.stageIndex && styles.stageDotUpcoming,
               ]}
             />
           ))}
         </View>
-        <Text style={styles.stageText}>지금 단계 2 → 흥분 상태예요</Text>
+        <Text style={styles.stageText}>{config.stageLabel}</Text>
 
-        {/* 진정 카드 */}
+        {/* 진정/안내 카드 */}
         <View style={styles.calmCard}>
-          <Text style={styles.calmEmoji}>🌬️</Text>
-          <Text style={styles.calmTitle}>천천히 숨을 쉬어봐요</Text>
-          <Text style={styles.calmSub}>
-            코로 깊게 들이쉬고…{'\n'}
-            입으로 천천히 내쉬어요
-          </Text>
+          <Text style={styles.calmEmoji}>{config.calmEmoji}</Text>
+          <Text style={styles.calmTitle}>{config.calmTitle}</Text>
+          <Text style={styles.calmSub}>{config.calmSub}</Text>
         </View>
 
         {/* 활동 선택 */}

@@ -62,7 +62,7 @@ export type RootStackParamList = {
   Welcome: AccountInfo & { pins: PINItem[] };
   Schedule: undefined;
   Feedback: { scheduleId: number; achieved: boolean };
-  Emergency: undefined;
+  Emergency: { stage?: 'stage_1' | 'stage_2' | 'stage_3' };
   GuardianReport: undefined;
 };
 

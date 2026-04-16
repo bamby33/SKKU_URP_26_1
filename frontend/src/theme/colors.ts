@@ -1,10 +1,10 @@
 export const colors = {
-  primary: '#2C3E6B',        // 모던 먹색 네이비
-  primaryLight: '#4A6FA5',   // 차분한 미드 블루
-  primaryBg: '#EEF2F7',      // 연한 블루그레이
+  primary: '#3A7BD5',         // 따뜻한 코발트 블루
+  primaryLight: '#5A9AE8',    // 밝은 스카이 블루
+  primaryBg: '#EBF2FB',       // 연한 블루 배경
 
-  guardian: '#1B4D3E',       // 딥 포레스트 그린
-  guardianLight: '#3A7D5E',  // 차분한 세이지 그린
+  guardian: '#1B4D3E',        // 딥 포레스트 그린
+  guardianLight: '#3A7D5E',   // 세이지 그린
 
   alert: '#9B2335',
   alertLight: '#C9303F',
@@ -15,13 +15,13 @@ export const colors = {
 
   success: '#1B6B4A',
 
-  background: '#F7F8FA',
+  background: '#F9F7F4',      // 따뜻한 크림 화이트
   white: '#FFFFFF',
-  card: '#EEF2F7',
+  card: '#EBF2FB',
 
-  text: '#111827',
+  text: '#1A1A2E',
   textSub: '#4B5563',
   textMuted: '#9CA3AF',
   textDisabled: '#D1D5DB',
-  border: '#DDE3EE',
+  border: '#DCE8F5',
 };

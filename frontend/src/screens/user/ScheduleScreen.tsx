@@ -72,6 +72,9 @@ export default function ScheduleScreen({ navigation }: Props) {
   const [isListening, setIsListening] = useState(false);
   const [pendingSchedule, setPendingSchedule] = useState<Schedule | null>(null);
   const [themeColor, setThemeColor] = useState(colors.primary);
+  const [feedbackStage, setFeedbackStage] = useState<string | null>(null);
+  const [feedbackChoices, setFeedbackChoices] = useState<string[]>([]);
+  const [feedbackAacButtons, setFeedbackAacButtons] = useState<string[]>([]);
 
   const openDrawer = () => {
     setShowMenu(true);
@@ -105,7 +108,7 @@ export default function ScheduleScreen({ navigation }: Props) {
   const currentSchedule = [...todaySchedules].reverse().find(s => s.scheduled_time <= nowTime);
   const nextSchedule = todaySchedules.find(s => s.scheduled_time > nowTime);
 
-  // 취침 야간 연장: 오늘 아직 시작된 일과가 없으면 어제 마지막 일과가 취침인지 확인
+  // 취침 야간 연장
   const yesterdayIndex = (todayIndex + 6) % 7;
   const yesterdayLast = schedules
     .filter(s => s.days_of_week.split(',').map(Number).includes(yesterdayIndex))
@@ -125,7 +128,6 @@ export default function ScheduleScreen({ navigation }: Props) {
     }
   }
 
-  // todaySchedules ref 동기화 (interval 클로저에서 최신값 참조)
   todaySchedulesRef.current = todaySchedules;
 
   useEffect(() => {
@@ -134,7 +136,6 @@ export default function ScheduleScreen({ navigation }: Props) {
     return () => { show.remove(); hide.remove(); };
   }, []);
 
-  // 스케줄 알림 함수
   const announceSchedule = (schedule: Schedule) => {
     const emoji = extractEmoji(schedule.title);
     const msg = `${emoji} ${schedule.title} 시간이에요! 지금 할 준비가 됐나요?`;
@@ -143,13 +144,30 @@ export default function ScheduleScreen({ navigation }: Props) {
     setPendingSchedule(schedule);
   };
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
+    if (!userId || !pendingSchedule) return;
+    const saved = pendingSchedule;
     setPendingSchedule(null);
     if (snoozeRef.current) clearTimeout(snoozeRef.current);
-    setMessages(prev => [...prev, { id: Date.now(), role: 'user', content: '알겠어요!' }]);
-    const reply = '잘했어요! 👍 파이팅!';
-    setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: reply }]);
-    Speech.speak(reply, { language: 'ko-KR' });
+
+    const userMsg = `✅ ${saved.title} 다 했어요!`;
+    setMessages(prev => [...prev, { id: Date.now(), role: 'user', content: userMsg }]);
+    setAiLoading(true);
+
+    try {
+      const res = await sendChat(userId, userMsg, { schedule_id: saved.id, achieved: true });
+      const reply = res.data.reply;
+      if (reply) {
+        setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: reply }]);
+        Speech.speak(reply, { language: 'ko-KR' });
+      }
+    } catch {
+      const fallback = '잘했어요! 👍 파이팅!';
+      setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: fallback }]);
+      Speech.speak(fallback, { language: 'ko-KR' });
+    } finally {
+      setAiLoading(false);
+    }
   };
 
   const handleSnooze = () => {
@@ -165,7 +183,6 @@ export default function ScheduleScreen({ navigation }: Props) {
     }, 3 * 60 * 1000);
   };
 
-  // 스케줄 시간 감지 interval (30초마다 체크)
   useEffect(() => {
     const check = () => {
       const n = new Date();
@@ -191,7 +208,6 @@ export default function ScheduleScreen({ navigation }: Props) {
     ).start();
   }, []);
 
-
   useEffect(() => {
     (async () => {
       try {
@@ -200,11 +216,9 @@ export default function ScheduleScreen({ navigation }: Props) {
         const id = Number(stored);
         setUserId(id);
 
-        // 테마 색 로드
         const savedColor = await AsyncStorage.getItem('theme_color');
         if (savedColor) setThemeColor(savedColor);
 
-        // 스케줄 + 채팅 기록 병렬 로드
         const [scheduleRes, historyRes] = await Promise.all([
           getSchedules(id),
           getChatHistory(id, 20),
@@ -223,7 +237,6 @@ export default function ScheduleScreen({ navigation }: Props) {
     })();
   }, []);
 
-  // 메시지 추가 시 스크롤 아래로
   useEffect(() => {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
   }, [messages]);
@@ -239,12 +252,25 @@ export default function ScheduleScreen({ navigation }: Props) {
 
     try {
       const res = await sendChat(userId, text);
-      const reply = res.data.reply;
+      const { reply, stage, feedback } = res.data;
       if (reply) {
         setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: reply }]);
         Speech.speak(reply, { language: 'ko-KR' });
       }
-    } catch (e) {
+      if (stage === 'stage_2') {
+        setTimeout(() => navigation.navigate('Emergency', { stage: 'stage_2' }), 800);
+      } else if (stage === 'stage_3') {
+        setTimeout(() => navigation.navigate('Emergency', { stage: 'stage_3' }), 800);
+      } else if (stage === 'stage_1' && feedback) {
+        setFeedbackStage(stage);
+        setFeedbackChoices(feedback.choices ?? []);
+        setFeedbackAacButtons(feedback.aac_buttons ?? []);
+      } else {
+        setFeedbackStage(null);
+        setFeedbackChoices([]);
+        setFeedbackAacButtons([]);
+      }
+    } catch {
       setMessages(prev => [...prev, {
         id: Date.now() + 1,
         role: 'assistant',
@@ -308,20 +334,19 @@ export default function ScheduleScreen({ navigation }: Props) {
             <Text style={[styles.currentTitle, { color: themeColor }]}>{effectiveCurrent?.title ?? '일과를 확인 중이에요'}</Text>
             <Text style={styles.currentTime}>{effectiveCurrent?.scheduled_time ?? ''}</Text>
           </View>
-          {/* 임시 테스트 버튼 */}
-          <TouchableOpacity onPress={() => announceSchedule({ id: 9999, title: '🧪 테스트 알림', scheduled_time: '14:15', days_of_week: '2' })}
-            style={{ backgroundColor: '#FEF3C7', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 16, marginBottom: 4 }}>
-            <Text style={{ color: '#92400E', fontWeight: '700', fontSize: 13 }}>⚙️ 알림 테스트</Text>
-          </TouchableOpacity>
 
           {/* 연락 버튼 */}
           <View style={styles.contactRow}>
-            <TouchableOpacity style={[styles.contactBtn, { borderColor: themeColor + '55', backgroundColor: themeColor + '12' }]} activeOpacity={0.8}
+            <TouchableOpacity
+              style={[styles.contactBtn, { borderColor: themeColor + '55', backgroundColor: themeColor + '12' }]}
+              activeOpacity={0.8}
               onPress={() => Alert.alert('보호자 연락', '보호자에게 연락합니다.')}>
               <Text style={styles.contactIcon}>👨‍👩‍👧</Text>
               <Text style={[styles.contactText, { color: themeColor }]}>보호자에게{'\n'}연락하기</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.contactBtn, { borderColor: themeColor + '55', backgroundColor: themeColor + '12' }]} activeOpacity={0.8}
+            <TouchableOpacity
+              style={[styles.contactBtn, { borderColor: themeColor + '55', backgroundColor: themeColor + '12' }]}
+              activeOpacity={0.8}
               onPress={() => Alert.alert('기관 연락', '기관에 연락합니다.')}>
               <Text style={styles.contactIcon}>🏢</Text>
               <Text style={[styles.contactText, { color: themeColor }]}>기관에{'\n'}연락하기</Text>
@@ -329,9 +354,8 @@ export default function ScheduleScreen({ navigation }: Props) {
           </View>
         </View>
 
-        {/* 채팅 + 입력 영역 (남은 공간 채움) */}
+        {/* 채팅 + 입력 영역 */}
         <View style={[styles.chatBox, { marginBottom: keyboardHeight }]}>
-          {/* 채팅 메시지 */}
           <ScrollView
             ref={scrollRef}
             style={styles.chatSection}
@@ -383,6 +407,44 @@ export default function ScheduleScreen({ navigation }: Props) {
             </View>
           )}
 
+          {/* 피드백 선택지 (stage_1) */}
+          {!pendingSchedule && feedbackStage && (feedbackChoices.length > 0 || feedbackAacButtons.length > 0) && (
+            <View style={styles.feedbackBox}>
+              {feedbackChoices.length > 0 && (
+                <View style={styles.feedbackChoiceRow}>
+                  {feedbackChoices.map((choice) => (
+                    <TouchableOpacity
+                      key={choice}
+                      style={[styles.feedbackChoiceBtn, { borderColor: themeColor }]}
+                      activeOpacity={0.85}
+                      onPress={() => {
+                        setFeedbackStage(null); setFeedbackChoices([]); setFeedbackAacButtons([]);
+                        handleSend(choice);
+                      }}>
+                      <Text style={[styles.feedbackChoiceText, { color: themeColor }]}>{choice}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+              {feedbackAacButtons.length > 0 && (
+                <View style={styles.feedbackAacRow}>
+                  {feedbackAacButtons.map((btn) => (
+                    <TouchableOpacity
+                      key={btn}
+                      style={styles.feedbackAacBtn}
+                      activeOpacity={0.85}
+                      onPress={() => {
+                        setFeedbackStage(null); setFeedbackChoices([]); setFeedbackAacButtons([]);
+                        handleSend(btn);
+                      }}>
+                      <Text style={styles.feedbackAacText}>{btn}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
+          )}
+
           {/* 입력창 */}
           <View style={styles.inputBar}>
             <TouchableOpacity
@@ -428,6 +490,17 @@ export default function ScheduleScreen({ navigation }: Props) {
               onPress={() => { closeDrawer(); setTimeout(() => setShowSchedule(true), 240); }}>
               <Text style={styles.drawerItemIcon}>📅</Text>
               <Text style={styles.drawerItemText}>일주일 스케줄</Text>
+            </TouchableOpacity>
+            <View style={styles.drawerDivider} />
+            <TouchableOpacity style={styles.drawerItem} activeOpacity={0.7}
+              onPress={() => {
+                closeDrawer();
+                const achieved = todaySchedules.filter(s => s.scheduled_time <= nowTime).length;
+                const total = todaySchedules.length;
+                Alert.alert('오늘 달성률', total === 0 ? '오늘 등록된 일과가 없어요.' : `${achieved} / ${total} 완료 (${Math.round(achieved / total * 100)}%)`);
+              }}>
+              <Text style={styles.drawerItemIcon}>📊</Text>
+              <Text style={styles.drawerItemText}>오늘 달성률</Text>
             </TouchableOpacity>
             <View style={styles.drawerDivider} />
             <TouchableOpacity style={styles.drawerItem} activeOpacity={0.7}
@@ -502,7 +575,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.white },
 
   header: {
-    backgroundColor: colors.primary,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -521,7 +593,6 @@ const styles = StyleSheet.create({
   },
   menuBtnText: { color: colors.white, fontSize: 18, fontWeight: '700' },
 
-  // 사이드 드로어
   drawerOverlay: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     backgroundColor: 'rgba(0,0,0,0.35)',
@@ -544,7 +615,7 @@ const styles = StyleSheet.create({
   },
   drawerTitle: { fontSize: 18, fontWeight: '800', color: colors.text },
   drawerClose: { fontSize: 18, color: colors.textMuted },
-  drawerDivider: { height: 1, backgroundColor: colors.border, marginHorizontal: 0 },
+  drawerDivider: { height: 1, backgroundColor: colors.border },
   drawerItem: {
     flexDirection: 'row', alignItems: 'center', gap: 14,
     paddingVertical: 18, paddingHorizontal: 20,
@@ -552,31 +623,17 @@ const styles = StyleSheet.create({
   drawerItemIcon: { fontSize: 20 },
   drawerItemText: { fontSize: 16, fontWeight: '600', color: colors.text },
 
-  // 연락 버튼
   contactRow: { flexDirection: 'row', gap: 10, width: '100%' },
   contactBtn: {
-    flex: 1, backgroundColor: colors.primaryBg,
+    flex: 1,
     borderRadius: 14, paddingVertical: 14,
     alignItems: 'center', gap: 6,
-    borderWidth: 1, borderColor: colors.border,
-  },
-  contactBtnAlt: {
-    backgroundColor: '#EEF7F2',
-    borderColor: '#C3DDD1',
+    borderWidth: 1,
   },
   contactIcon: { fontSize: 22 },
-  contactText: { fontSize: 13, fontWeight: '700', color: colors.primary, textAlign: 'center', lineHeight: 18 },
+  contactText: { fontSize: 13, fontWeight: '700', textAlign: 'center', lineHeight: 18 },
 
-  content: { alignItems: 'center', padding: 16, gap: 16, paddingBottom: 8 },
   topContent: { alignItems: 'center', padding: 16, gap: 12 },
-
-  timeBadge: {
-    backgroundColor: colors.primary,
-    paddingHorizontal: 18,
-    paddingVertical: 6,
-    borderRadius: 20,
-  },
-  timeBadgeText: { color: colors.white, fontWeight: '700', fontSize: 14 },
 
   emojiBig: { fontSize: 80, lineHeight: 90 },
 
@@ -594,12 +651,23 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 3 },
   },
-  currentLabel: { fontSize: 13, color: colors.primaryLight, fontWeight: '700' },
-  currentTitle: { fontSize: 24, fontWeight: '900', color: colors.primary },
+  currentLabel: { fontSize: 13, fontWeight: '700' },
+  currentTitle: { fontSize: 24, fontWeight: '900' },
   currentTime: { fontSize: 14, color: '#94A3B8', fontWeight: '600' },
 
+  chatBox: {
+    flex: 1,
+    backgroundColor: colors.white,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: -2 },
+  },
   chatSection: { flex: 1, width: '100%' },
-  chatContent: { gap: 10, paddingVertical: 4 },
+  chatContent: { gap: 10, paddingVertical: 4, paddingHorizontal: 12 },
   chatBubbleRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
   chatBubbleRowUser: { justifyContent: 'flex-end' },
   chatAvatar: { fontSize: 24 },
@@ -617,24 +685,22 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
   },
   chatBubbleUser: {
-    backgroundColor: colors.primary,
     borderBottomLeftRadius: 18,
     borderBottomRightRadius: 4,
   },
   chatText: { fontSize: 16, fontWeight: '600', color: '#1E293B', lineHeight: 24 },
   chatTextUser: { color: colors.white },
 
-  actionRow: { flexDirection: 'row', gap: 12, width: '100%' },
+  actionRow: { flexDirection: 'row', gap: 12, paddingHorizontal: 12, paddingVertical: 8 },
   btnOk: {
     flex: 1,
-    backgroundColor: colors.primary,
     borderRadius: 18,
     paddingVertical: 16,
     alignItems: 'center',
     gap: 4,
     elevation: 5,
-    shadowColor: colors.primary,
-    shadowOpacity: 0.35,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 3 },
   },
@@ -654,20 +720,62 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
   },
   btnLaterEmoji: { fontSize: 26 },
-  btnLaterText: { color: colors.primary, fontWeight: '800', fontSize: 16 },
+  btnLaterText: { color: colors.textSub, fontWeight: '800', fontSize: 16 },
 
-  tableCard: {
+  feedbackBox: { paddingHorizontal: 12, paddingVertical: 8, gap: 8 },
+  feedbackChoiceRow: { flexDirection: 'row', gap: 10 },
+  feedbackChoiceBtn: {
+    flex: 1, paddingVertical: 16, borderRadius: 16,
+    borderWidth: 2, alignItems: 'center',
     backgroundColor: colors.white,
-    borderRadius: 18,
-    padding: 16,
-    width: '100%',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
+    elevation: 2, shadowColor: '#000',
+    shadowOpacity: 0.07, shadowRadius: 6,
     shadowOffset: { width: 0, height: 2 },
   },
-  tableTitle: { fontSize: 13, fontWeight: '800', color: colors.primary, marginBottom: 12 },
+  feedbackChoiceText: { fontSize: 15, fontWeight: '900' },
+  feedbackAacRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  feedbackAacBtn: {
+    paddingHorizontal: 18, paddingVertical: 11,
+    borderRadius: 22, backgroundColor: '#F8F4FF',
+    borderWidth: 1.5, borderColor: '#D0BCFF',
+  },
+  feedbackAacText: { fontSize: 14, fontWeight: '800', color: '#5B3FA6' },
+
+  inputBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  input: {
+    flex: 1,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: '#1E293B',
+  },
+  sendBtn: {
+    borderRadius: 20,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+  },
+  sendBtnDisabled: { backgroundColor: '#CBD5E1' },
+  sendBtnText: { color: colors.white, fontWeight: '800', fontSize: 14 },
+
+  micBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  micBtnActive: { backgroundColor: '#FEE2E2' },
+  micBtnText: { fontSize: 20 },
+
   emptyText: { fontSize: 14, color: '#94A3B8', textAlign: 'center', paddingVertical: 12 },
 
   tableRow: { flexDirection: 'row' },
@@ -701,56 +809,6 @@ const styles = StyleSheet.create({
   todayCell: { backgroundColor: '#EFF6FF' },
   cellText: { fontSize: 10, fontWeight: '700', color: colors.primary, textAlign: 'center' },
   cellEmpty: { fontSize: 12, color: '#E2E8F0' },
-
-  chatBox: {
-    flex: 1,
-    backgroundColor: colors.white,
-    borderTopWidth: 1,
-    borderTopColor: '#E2E8F0',
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: -2 },
-  },
-  inputBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  input: {
-    flex: 1,
-    backgroundColor: '#F1F5F9',
-    borderRadius: 24,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    fontSize: 15,
-    color: '#1E293B',
-  },
-  sendBtn: {
-    backgroundColor: colors.primary,
-    borderRadius: 20,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-  },
-  sendBtnDisabled: { backgroundColor: '#CBD5E1' },
-  sendBtnText: { color: colors.white, fontWeight: '800', fontSize: 14 },
-
-  micBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  micBtnActive: {
-    backgroundColor: '#FEE2E2',
-  },
-  micBtnText: { fontSize: 20 },
-
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
   modalSheet: {
