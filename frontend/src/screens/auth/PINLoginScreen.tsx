@@ -199,7 +199,7 @@ export default function PINLoginScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f4f7ff' },
+  container: { flex: 1, backgroundColor: '#F4FAF7' },
   header: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8, gap: 16,

@@ -1,7 +1,8 @@
 import axios from 'axios';
 
-// 개발 중: 에뮬레이터에서 10.0.2.2 = 로컬호스트
-const BASE_URL = 'http://10.0.2.2:8000';
+// Android 에뮬레이터: 10.0.2.2 / 실제 iPhone: 10.5.5.72
+const DEV_MODE: 'emulator' | 'iphone' = 'emulator';
+const BASE_URL = DEV_MODE === 'iphone' ? 'http://10.5.5.72:8000' : 'http://10.0.2.2:8000';
 
 export const api = axios.create({
   baseURL: BASE_URL,

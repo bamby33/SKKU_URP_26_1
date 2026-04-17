@@ -7,6 +7,29 @@ Tool 5: 메시지 발신 Tool
 from models.database import SessionLocal, User, Guardian, Schedule, ScheduleLog, ScheduleStatus
 from datetime import datetime, date
 from typing import Any
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+TWILIO_SID   = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_FROM  = os.getenv("TWILIO_FROM_NUMBER")  # +1XXXXXXXXXX 형식
+
+
+def _send_sms(to: str, body: str) -> bool:
+    """Twilio SMS 발신. 실패 시 콘솔 출력으로 폴백."""
+    if not all([TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM]):
+        print(f"[SMS 미설정 - 콘솔 출력]\nTo: {to}\n{body}")
+        return False
+    try:
+        from twilio.rest import Client
+        client = Client(TWILIO_SID, TWILIO_TOKEN)
+        client.messages.create(to=to, from_=TWILIO_FROM, body=body)
+        return True
+    except Exception as e:
+        print(f"[SMS 발신 실패: {e}]\nTo: {to}\n{body}")
+        return False
 
 
 TOOL_DEFINITION = {
@@ -110,9 +133,10 @@ def send_message(
         else:
             content = extra_info or "알림 메시지"
 
-        # 실제 발신 대신 콘솔 출력 (SMS/Push 연동 전)
+        sent = _send_sms(guardian_contact, content)
+
         print(f"\n{'='*50}")
-        print(f"  [MESSAGE] -> {guardian_contact}")
+        print(f"  [SMS {'발신 완료' if sent else '콘솔 폴백'}] -> {guardian_contact}")
         print(f"  {content}")
         print(f"{'='*50}\n")
 
@@ -122,6 +146,7 @@ def send_message(
             "message_type": message_type,
             "recipient": guardian_contact,
             "content": content,
+            "sms_sent": sent,
             "sent_at": datetime.utcnow().isoformat()
         }
     finally:

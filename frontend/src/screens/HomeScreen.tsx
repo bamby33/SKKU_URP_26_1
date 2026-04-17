@@ -118,7 +118,7 @@ export default function HomeScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#dce8ff',
+    backgroundColor: '#D4EDD4',
   },
   inner: {
     flex: 1,

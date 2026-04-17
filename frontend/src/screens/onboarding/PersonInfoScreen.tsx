@@ -158,7 +158,7 @@ export default function PersonInfoScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f4f7ff' },
+  container: { flex: 1, backgroundColor: '#F4FAF7' },
 
   header: {
     flexDirection: 'row',
@@ -255,6 +255,6 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 3 },
   },
-  nextBtnDisabled: { backgroundColor: '#c5d0e8', elevation: 0, shadowOpacity: 0 },
+  nextBtnDisabled: { backgroundColor: '#A8D8C0', elevation: 0, shadowOpacity: 0 },
   nextBtnText: { color: colors.white, fontWeight: '800', fontSize: 16 },
 });

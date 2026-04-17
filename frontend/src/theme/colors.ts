@@ -1,10 +1,10 @@
 export const colors = {
-  primary: '#3A7BD5',         // 따뜻한 코발트 블루
-  primaryLight: '#5A9AE8',    // 밝은 스카이 블루
-  primaryBg: '#EBF2FB',       // 연한 블루 배경
+  primary: '#4A9B6F',          // 따뜻한 세이지 그린
+  primaryLight: '#6DB88F',     // 밝은 민트 그린
+  primaryBg: '#E8F5EE',        // 연한 민트 배경
 
-  guardian: '#1B4D3E',        // 딥 포레스트 그린
-  guardianLight: '#3A7D5E',   // 세이지 그린
+  guardian: '#2D6B4F',         // 딥 포레스트 그린 (보호자)
+  guardianLight: '#4A8E70',    // 미디엄 포레스트 그린
 
   alert: '#9B2335',
   alertLight: '#C9303F',
@@ -13,15 +13,15 @@ export const colors = {
   warning: '#B45309',
   warningBg: '#FEF3C7',
 
-  success: '#1B6B4A',
+  success: '#2D7A52',
 
-  background: '#F9F7F4',      // 따뜻한 크림 화이트
+  background: '#F4FAF7',       // 따뜻한 민트 화이트
   white: '#FFFFFF',
-  card: '#EBF2FB',
+  card: '#E8F5EE',
 
-  text: '#1A1A2E',
-  textSub: '#4B5563',
-  textMuted: '#9CA3AF',
-  textDisabled: '#D1D5DB',
-  border: '#DCE8F5',
+  text: '#1A2E22',             // 딥 그린-블랙
+  textSub: '#4B6356',          // 그린-그레이
+  textMuted: '#8FA99A',
+  textDisabled: '#C8D9D0',
+  border: '#C8E5D8',
 };

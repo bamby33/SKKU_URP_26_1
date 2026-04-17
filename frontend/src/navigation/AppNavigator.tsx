@@ -13,6 +13,7 @@ import ScheduleScreen from '../screens/user/ScheduleScreen';
 import FeedbackScreen from '../screens/user/FeedbackScreen';
 import EmergencyScreen from '../screens/user/EmergencyScreen';
 import GuardianReportScreen from '../screens/guardian/GuardianReportScreen';
+import AIChatScreen from '../screens/user/AIChatScreen';
 
 export type PINItem = {
   order: number;
@@ -64,6 +65,7 @@ export type RootStackParamList = {
   Feedback: { scheduleId: number; achieved: boolean };
   Emergency: { stage?: 'stage_1' | 'stage_2' | 'stage_3' };
   GuardianReport: undefined;
+  AIChat: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -84,6 +86,11 @@ export default function AppNavigator() {
       <Stack.Screen name="Feedback" component={FeedbackScreen} />
       <Stack.Screen name="Emergency" component={EmergencyScreen} />
       <Stack.Screen name="GuardianReport" component={GuardianReportScreen} />
+      <Stack.Screen
+        name="AIChat"
+        component={AIChatScreen}
+        options={{ animation: 'fade' }}
+      />
     </Stack.Navigator>
   );
 }

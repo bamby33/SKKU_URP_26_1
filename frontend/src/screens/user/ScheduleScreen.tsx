@@ -1,26 +1,26 @@
 /**
- * 화면 1 · 사용자(당사자)
- * 실시간 스케줄 공지 + AI 채팅 연동 + 일주일 스케줄 표
+ * 사용자(당사자) 메인 화면
+ * 지금 할 일 · 오늘 일과 타임라인 인라인 표시 · AI 마이크
  */
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView,
   StyleSheet, Animated, Easing, Alert, ActivityIndicator,
-  TextInput, Keyboard, Modal,
+  Modal, Dimensions,
 } from 'react-native';
 import * as Speech from 'expo-speech';
-import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from 'expo-speech-recognition';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
-import { sendChat, getChatHistory, getSchedules } from '../../api/client';
+import { getSchedules } from '../../api/client';
+
+const { width: SW } = Dimensions.get('window');
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Schedule'>;
 };
-
 type Schedule = {
   id: number;
   title: string;
@@ -28,808 +28,638 @@ type Schedule = {
   days_of_week: string;
 };
 
-type ChatMessage = {
-  id: number;
-  role: 'user' | 'assistant';
-  content: string;
+const DAY_LABELS = ['월', '화', '수', '목', '금', '토', '일'];
+const SLEEP_KW   = ['취침', '수면', '자기', '잠자기', '잠'];
+
+const isSleep    = (t: string) => SLEEP_KW.some(k => t.includes(k));
+const getEmoji   = (t: string) => t.match(/\p{Emoji_Presentation}/u)?.[0] ?? '📋';
+const todayIdx   = () => (new Date().getDay() + 6) % 7;
+const nowHHMM    = () => {
+  const n = new Date();
+  return `${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}`;
 };
 
-const DAY_LABELS = ['월', '화', '수', '목', '금', '토', '일'];
-const SLEEP_KEYWORDS = ['취침', '수면', '자기', '잠자기', '잠'];
-
-function isSleepSchedule(title: string): boolean {
-  return SLEEP_KEYWORDS.some(kw => title.includes(kw));
-}
-
-function extractEmoji(title: string): string {
-  const match = title.match(/\p{Emoji_Presentation}/u);
-  return match ? match[0] : '📋';
-}
-
-function getTodayIndex(): number {
-  return (new Date().getDay() + 6) % 7;
-}
-
-const DRAWER_WIDTH = 260;
+const DRAWER_W = 260;
 
 export default function ScheduleScreen({ navigation }: Props) {
-  const scrollRef = useRef<ScrollView>(null);
-  const bounceAnim = useRef(new Animated.Value(0)).current;
-  const drawerAnim = useRef(new Animated.Value(DRAWER_WIDTH)).current;
+  const bounceAnim   = useRef(new Animated.Value(0)).current;
+  const drawerAnim   = useRef(new Animated.Value(DRAWER_W)).current;
   const announcedRef = useRef<Set<number>>(new Set());
-  const snoozeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const todaySchedulesRef = useRef<Schedule[]>([]);
+  const snoozeRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const todaySchedRef = useRef<Schedule[]>([]);
 
-  const [userId, setUserId] = useState<number | null>(null);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
-  const [scheduleLoading, setScheduleLoading] = useState(true);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [inputText, setInputText] = useState('');
-  const [aiLoading, setAiLoading] = useState(false);
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const [showSchedule, setShowSchedule] = useState(false);
-  const [showMenu, setShowMenu] = useState(false);
-  const [isListening, setIsListening] = useState(false);
-  const [pendingSchedule, setPendingSchedule] = useState<Schedule | null>(null);
-  const [themeColor, setThemeColor] = useState(colors.primary);
-  const [feedbackStage, setFeedbackStage] = useState<string | null>(null);
-  const [feedbackChoices, setFeedbackChoices] = useState<string[]>([]);
-  const [feedbackAacButtons, setFeedbackAacButtons] = useState<string[]>([]);
+  const [loading,   setLoading]   = useState(true);
+  const [showMenu,  setShowMenu]  = useState(false);
+  const [showWeek,  setShowWeek]  = useState(false);
+  const [pending,   setPending]   = useState<Schedule | null>(null);
+  const [theme,     setTheme]     = useState(colors.primary);
+  const [nowTime,   setNowTime]   = useState(nowHHMM());
+
+  // 시간 갱신 (1분마다)
+  useEffect(() => {
+    const t = setInterval(() => setNowTime(nowHHMM()), 60000);
+    return () => clearInterval(t);
+  }, []);
+
+  const today = todayIdx();
+  const todaySchedules = schedules
+    .filter(s => s.days_of_week.split(',').map(Number).includes(today))
+    .sort((a, b) => a.scheduled_time.localeCompare(b.scheduled_time));
+
+  const current   = [...todaySchedules].reverse().find(s => s.scheduled_time <= nowTime);
+  const nextSched = todaySchedules.find(s => s.scheduled_time > nowTime);
+
+  // 현재 + 앞으로 남은 일과만 표시 (지난 건 숨김)
+  const upcomingSchedules = todaySchedules.filter(
+    s => s.scheduled_time >= nowTime || effectiveCurrent?.id === s.id
+  );
+  const yIdx = (today + 6) % 7;
+  const yLast = schedules
+    .filter(s => s.days_of_week.split(',').map(Number).includes(yIdx))
+    .sort((a,b) => a.scheduled_time.localeCompare(b.scheduled_time)).at(-1);
+  const effectiveCurrent = current ?? (!current && yLast && isSleep(yLast.title) ? yLast : null);
+
+  todaySchedRef.current = todaySchedules;
 
   const openDrawer = () => {
     setShowMenu(true);
     Animated.timing(drawerAnim, { toValue: 0, duration: 260, useNativeDriver: true }).start();
   };
   const closeDrawer = () => {
-    Animated.timing(drawerAnim, { toValue: DRAWER_WIDTH, duration: 220, useNativeDriver: true }).start(
+    Animated.timing(drawerAnim, { toValue: DRAWER_W, duration: 220, useNativeDriver: true }).start(
       () => setShowMenu(false)
     );
   };
 
-  // 음성 인식 이벤트
-  useSpeechRecognitionEvent('start', () => setIsListening(true));
-  useSpeechRecognitionEvent('end', () => setIsListening(false));
-  useSpeechRecognitionEvent('error', () => setIsListening(false));
-  useSpeechRecognitionEvent('result', (event) => {
-    const text = event.results[0]?.transcript ?? '';
-    if (text && event.isFinal) handleSend(text);
-  });
-
-  const now = new Date();
-  const hour = now.getHours();
-  const minute = now.getMinutes();
-  const nowTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-
-  const todayIndex = getTodayIndex();
-  const todaySchedules = schedules
-    .filter(s => s.days_of_week.split(',').map(Number).includes(todayIndex))
-    .sort((a, b) => a.scheduled_time.localeCompare(b.scheduled_time));
-
-  const currentSchedule = [...todaySchedules].reverse().find(s => s.scheduled_time <= nowTime);
-  const nextSchedule = todaySchedules.find(s => s.scheduled_time > nowTime);
-
-  // 취침 야간 연장
-  const yesterdayIndex = (todayIndex + 6) % 7;
-  const yesterdayLast = schedules
-    .filter(s => s.days_of_week.split(',').map(Number).includes(yesterdayIndex))
-    .sort((a, b) => a.scheduled_time.localeCompare(b.scheduled_time))
-    .at(-1);
-  const effectiveCurrent = currentSchedule
-    ?? (!currentSchedule && yesterdayLast && isSleepSchedule(yesterdayLast.title) ? yesterdayLast : null);
-
-  // 일주일 그리드
-  const times = [...new Set(schedules.map(s => s.scheduled_time))].sort();
-  const grid: Record<string, Record<number, Schedule>> = {};
-  for (const s of schedules) {
-    const days = s.days_of_week.split(',').map(Number);
-    for (const day of days) {
-      if (!grid[s.scheduled_time]) grid[s.scheduled_time] = {};
-      grid[s.scheduled_time][day] = s;
-    }
-  }
-
-  todaySchedulesRef.current = todaySchedules;
-
-  useEffect(() => {
-    const show = Keyboard.addListener('keyboardDidShow', e => setKeyboardHeight(e.endCoordinates.height));
-    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardHeight(0));
-    return () => { show.remove(); hide.remove(); };
-  }, []);
-
-  const announceSchedule = (schedule: Schedule) => {
-    const emoji = extractEmoji(schedule.title);
-    const msg = `${emoji} ${schedule.title} 시간이에요! 지금 할 준비가 됐나요?`;
-    setMessages(prev => [...prev, { id: Date.now(), role: 'assistant', content: msg }]);
-    Speech.speak(msg, { language: 'ko-KR' });
-    setPendingSchedule(schedule);
+  // 스케줄 알림
+  const announce = (s: Schedule) => {
+    Speech.speak(`${getEmoji(s.title)} ${s.title} 시간이에요! 지금 할 준비가 됐나요?`, { language: 'ko-KR' });
+    setPending(s);
   };
-
-  const handleConfirm = async () => {
-    if (!userId || !pendingSchedule) return;
-    const saved = pendingSchedule;
-    setPendingSchedule(null);
+  const handleConfirm = () => {
+    if (!pending) return;
+    const s = pending; setPending(null);
     if (snoozeRef.current) clearTimeout(snoozeRef.current);
-
-    const userMsg = `✅ ${saved.title} 다 했어요!`;
-    setMessages(prev => [...prev, { id: Date.now(), role: 'user', content: userMsg }]);
-    setAiLoading(true);
-
-    try {
-      const res = await sendChat(userId, userMsg, { schedule_id: saved.id, achieved: true });
-      const reply = res.data.reply;
-      if (reply) {
-        setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: reply }]);
-        Speech.speak(reply, { language: 'ko-KR' });
-      }
-    } catch {
-      const fallback = '잘했어요! 👍 파이팅!';
-      setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: fallback }]);
-      Speech.speak(fallback, { language: 'ko-KR' });
-    } finally {
-      setAiLoading(false);
-    }
+    Speech.speak(`${getEmoji(s.title)} 잘했어요! 파이팅!`, { language: 'ko-KR' });
   };
-
   const handleSnooze = () => {
-    const saved = pendingSchedule;
-    setPendingSchedule(null);
-    setMessages(prev => [...prev, { id: Date.now(), role: 'user', content: '조금 이따가 할래요' }]);
-    const reply = '알겠어요! 3분 뒤에 다시 알려드릴게요 😊';
-    setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: reply }]);
-    Speech.speak(reply, { language: 'ko-KR' });
+    const s = pending; setPending(null);
+    Speech.speak('알겠어요! 3분 뒤에 다시 알려드릴게요', { language: 'ko-KR' });
     if (snoozeRef.current) clearTimeout(snoozeRef.current);
-    snoozeRef.current = setTimeout(() => {
-      if (saved) announceSchedule(saved);
-    }, 3 * 60 * 1000);
+    snoozeRef.current = setTimeout(() => { if (s) announce(s); }, 3 * 60 * 1000);
   };
 
+  // AI 마이크 — AIChat 화면으로 페이드 전환
+  const handleMic = () => navigation.navigate('AIChat');
+
+  // 인터벌
   useEffect(() => {
-    const check = () => {
-      const n = new Date();
-      const t = `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`;
-      const due = todaySchedulesRef.current.find(
-        s => s.scheduled_time === t && !announcedRef.current.has(s.id)
-      );
-      if (due) {
-        announcedRef.current.add(due.id);
-        announceSchedule(due);
-      }
-    };
-    const interval = setInterval(check, 30000);
-    return () => { clearInterval(interval); if (snoozeRef.current) clearTimeout(snoozeRef.current); };
+    const iv = setInterval(() => {
+      const t = nowHHMM();
+      const due = todaySchedRef.current.find(s => s.scheduled_time === t && !announcedRef.current.has(s.id));
+      if (due) { announcedRef.current.add(due.id); announce(due); }
+    }, 30000);
+    return () => { clearInterval(iv); if (snoozeRef.current) clearTimeout(snoozeRef.current); };
   }, []);
 
+  // 이모지 바운스
   useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(bounceAnim, { toValue: -10, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-        Animated.timing(bounceAnim, { toValue: 0, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-      ])
-    ).start();
+    Animated.loop(Animated.sequence([
+      Animated.timing(bounceAnim, { toValue: -8, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      Animated.timing(bounceAnim, { toValue: 0,  duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+    ])).start();
   }, []);
 
+  // 초기 로드
   useEffect(() => {
     (async () => {
       try {
         const stored = await AsyncStorage.getItem('user_id');
         if (!stored) return;
         const id = Number(stored);
-        setUserId(id);
-
-        const savedColor = await AsyncStorage.getItem('theme_color');
-        if (savedColor) setThemeColor(savedColor);
-
-        const [scheduleRes, historyRes] = await Promise.all([
-          getSchedules(id),
-          getChatHistory(id, 20),
-        ]);
-        setSchedules(scheduleRes.data);
-        setMessages(historyRes.data.map((m: any) => ({
-          id: m.id,
-          role: m.role,
-          content: m.content,
-        })));
-      } catch (e) {
-        console.warn('초기 로드 실패', e);
-      } finally {
-        setScheduleLoading(false);
-      }
+        const col = await AsyncStorage.getItem('theme_color');
+        if (col) setTheme(col);
+        const res = await getSchedules(id);
+        setSchedules(res.data);
+      } catch (e) { console.warn(e); }
+      finally { setLoading(false); }
     })();
   }, []);
-
-  useEffect(() => {
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
-  }, [messages]);
-
-  const handleSend = async (voiceText?: string) => {
-    const text = (voiceText ?? inputText).trim();
-    if (!text || !userId || aiLoading) return;
-
-    const userMsg: ChatMessage = { id: Date.now(), role: 'user', content: text };
-    setMessages(prev => [...prev, userMsg]);
-    if (!voiceText) setInputText('');
-    setAiLoading(true);
-
-    try {
-      const res = await sendChat(userId, text);
-      const { reply, stage, feedback } = res.data;
-      if (reply) {
-        setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: reply }]);
-        Speech.speak(reply, { language: 'ko-KR' });
-      }
-      if (stage === 'stage_2') {
-        setTimeout(() => navigation.navigate('Emergency', { stage: 'stage_2' }), 800);
-      } else if (stage === 'stage_3') {
-        setTimeout(() => navigation.navigate('Emergency', { stage: 'stage_3' }), 800);
-      } else if (stage === 'stage_1' && feedback) {
-        setFeedbackStage(stage);
-        setFeedbackChoices(feedback.choices ?? []);
-        setFeedbackAacButtons(feedback.aac_buttons ?? []);
-      } else {
-        setFeedbackStage(null);
-        setFeedbackChoices([]);
-        setFeedbackAacButtons([]);
-      }
-    } catch {
-      setMessages(prev => [...prev, {
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: '죄송해요, 잠시 후 다시 시도해 주세요 😢',
-      }]);
-    } finally {
-      setAiLoading(false);
-    }
-  };
-
-  const handleMicPress = async () => {
-    if (isListening) {
-      ExpoSpeechRecognitionModule.stop();
-    } else {
-      const { granted } = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
-      if (!granted) {
-        Alert.alert('권한 필요', '마이크 권한을 허용해 주세요.');
-        return;
-      }
-      ExpoSpeechRecognitionModule.start({ lang: 'ko-KR', interimResults: false });
-    }
-  };
 
   const handleLogout = () => {
     Alert.alert('로그아웃', '로그아웃 할까요?', [
       { text: '아니요', style: 'cancel' },
-      {
-        text: '네',
-        style: 'destructive',
-        onPress: async () => {
-          await AsyncStorage.clear();
-          navigation.reset({ index: 0, routes: [{ name: 'Auth' }] });
-        },
-      },
+      { text: '네', style: 'destructive', onPress: async () => {
+        await AsyncStorage.clear();
+        navigation.reset({ index: 0, routes: [{ name: 'Auth' }] });
+      }},
     ]);
   };
 
+  // 일주일 그리드용
+  const times = [...new Set(schedules.map(s => s.scheduled_time))].sort();
+  const grid: Record<string, Record<number, Schedule>> = {};
+  for (const s of schedules) {
+    s.days_of_week.split(',').map(Number).forEach(d => {
+      if (!grid[s.scheduled_time]) grid[s.scheduled_time] = {};
+      grid[s.scheduled_time][d] = s;
+    });
+  }
+
+  // ── 렌더 ──────────────────────────────────────────────────────────────────
   return (
-    <SafeAreaView style={styles.container}>
-      {/* 헤더: 다음 일과 + 메뉴 */}
-      <View style={[styles.header, { backgroundColor: themeColor }]}>
-        <View style={styles.headerLeft}>
-          <Text style={styles.nextLabel}>다음 일과</Text>
-          <Text style={styles.nextText}>
-            {nextSchedule ? `${nextSchedule.scheduled_time} ${nextSchedule.title}` : '오늘 일과 없음'}
+    <SafeAreaView style={styles.root}>
+
+      {/* ─── 헤더 ─── */}
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.hLabel}>다음 일과</Text>
+          <Text style={[styles.hValue, { color: theme }]} numberOfLines={1}>
+            {nextSched ? `${nextSched.scheduled_time}  ${nextSched.title}` : '오늘 일과 없음'}
           </Text>
         </View>
-        <TouchableOpacity style={styles.menuBtn} onPress={openDrawer} activeOpacity={0.75}>
-          <Text style={styles.menuBtnText}>☰</Text>
+        <TouchableOpacity style={[styles.menuBtn, { backgroundColor: theme + '18' }]} onPress={openDrawer} activeOpacity={0.75}>
+          <Text style={[styles.menuIcon, { color: theme }]}>☰</Text>
         </TouchableOpacity>
       </View>
 
-      <View style={{ flex: 1 }}>
-        {/* 현재 할 일 + 이모지 */}
-        <View style={styles.topContent}>
-          <Animated.Text style={[styles.emojiBig, { transform: [{ translateY: bounceAnim }] }]}>
-            {effectiveCurrent ? extractEmoji(effectiveCurrent.title) : '📋'}
+      {/* ─── 상단 고정 영역 ─── */}
+      <View style={styles.body}>
+
+        {/* 현재 일과 카드 */}
+        <View style={styles.nowCard}>
+          <Animated.Text style={[styles.nowEmoji, { transform: [{ translateY: bounceAnim }] }]}>
+            {effectiveCurrent ? getEmoji(effectiveCurrent.title) : '📋'}
           </Animated.Text>
-          <View style={styles.currentCard}>
-            <Text style={[styles.currentLabel, { color: themeColor }]}>지금 할 일이에요!</Text>
-            <Text style={[styles.currentTitle, { color: themeColor }]}>{effectiveCurrent?.title ?? '일과를 확인 중이에요'}</Text>
-            <Text style={styles.currentTime}>{effectiveCurrent?.scheduled_time ?? ''}</Text>
-          </View>
-
-          {/* 연락 버튼 */}
-          <View style={styles.contactRow}>
-            <TouchableOpacity
-              style={[styles.contactBtn, { borderColor: themeColor + '55', backgroundColor: themeColor + '12' }]}
-              activeOpacity={0.8}
-              onPress={() => Alert.alert('보호자 연락', '보호자에게 연락합니다.')}>
-              <Text style={styles.contactIcon}>👨‍👩‍👧</Text>
-              <Text style={[styles.contactText, { color: themeColor }]}>보호자에게{'\n'}연락하기</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.contactBtn, { borderColor: themeColor + '55', backgroundColor: themeColor + '12' }]}
-              activeOpacity={0.8}
-              onPress={() => Alert.alert('기관 연락', '기관에 연락합니다.')}>
-              <Text style={styles.contactIcon}>🏢</Text>
-              <Text style={[styles.contactText, { color: themeColor }]}>기관에{'\n'}연락하기</Text>
-            </TouchableOpacity>
+          <View style={styles.nowInfo}>
+            <Text style={[styles.nowChip, { color: theme, backgroundColor: theme + '18' }]}>
+              지금 할 일
+            </Text>
+            <Text style={[styles.nowTitle, { color: theme }]} numberOfLines={2}>
+              {effectiveCurrent?.title ?? '일과를 확인 중이에요'}
+            </Text>
+            {effectiveCurrent?.scheduled_time
+              ? <Text style={styles.nowTime}>{effectiveCurrent.scheduled_time}</Text>
+              : null}
           </View>
         </View>
 
-        {/* 채팅 + 입력 영역 */}
-        <View style={[styles.chatBox, { marginBottom: keyboardHeight }]}>
-          <ScrollView
-            ref={scrollRef}
-            style={styles.chatSection}
-            contentContainerStyle={styles.chatContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {messages.length === 0 && !aiLoading && (
-              <View style={styles.chatBubbleRow}>
-                <Text style={styles.chatAvatar}>🤖</Text>
-                <View style={styles.chatBubble}>
-                  <Text style={styles.chatText}>안녕하세요! 무엇이든 물어보세요 😊</Text>
-                </View>
-              </View>
-            )}
-            {messages.map(msg => (
-              <View
-                key={msg.id}
-                style={[styles.chatBubbleRow, msg.role === 'user' && styles.chatBubbleRowUser]}
-              >
-                {msg.role === 'assistant' && <Text style={styles.chatAvatar}>🤖</Text>}
-                <View style={[styles.chatBubble, msg.role === 'user' && { ...styles.chatBubbleUser, backgroundColor: themeColor }]}>
-                  <Text style={[styles.chatText, msg.role === 'user' && styles.chatTextUser]}>
-                    {msg.content}
-                  </Text>
-                </View>
-              </View>
-            ))}
-            {aiLoading && (
-              <View style={styles.chatBubbleRow}>
-                <Text style={styles.chatAvatar}>🤖</Text>
-                <View style={styles.chatBubble}>
-                  <ActivityIndicator size="small" color={themeColor} />
-                </View>
-              </View>
-            )}
-          </ScrollView>
-
-          {/* 스케줄 알림 행동 버튼 */}
-          {pendingSchedule && (
-            <View style={styles.actionRow}>
-              <TouchableOpacity style={[styles.btnOk, { backgroundColor: themeColor }]} onPress={handleConfirm} activeOpacity={0.85}>
-                <Text style={styles.btnOkEmoji}>✅</Text>
-                <Text style={styles.btnOkText}>알겠어요!</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.btnLater} onPress={handleSnooze} activeOpacity={0.85}>
-                <Text style={styles.btnLaterEmoji}>⏱</Text>
-                <Text style={styles.btnLaterText}>조금 이따가</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* 피드백 선택지 (stage_1) */}
-          {!pendingSchedule && feedbackStage && (feedbackChoices.length > 0 || feedbackAacButtons.length > 0) && (
-            <View style={styles.feedbackBox}>
-              {feedbackChoices.length > 0 && (
-                <View style={styles.feedbackChoiceRow}>
-                  {feedbackChoices.map((choice) => (
-                    <TouchableOpacity
-                      key={choice}
-                      style={[styles.feedbackChoiceBtn, { borderColor: themeColor }]}
-                      activeOpacity={0.85}
-                      onPress={() => {
-                        setFeedbackStage(null); setFeedbackChoices([]); setFeedbackAacButtons([]);
-                        handleSend(choice);
-                      }}>
-                      <Text style={[styles.feedbackChoiceText, { color: themeColor }]}>{choice}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              )}
-              {feedbackAacButtons.length > 0 && (
-                <View style={styles.feedbackAacRow}>
-                  {feedbackAacButtons.map((btn) => (
-                    <TouchableOpacity
-                      key={btn}
-                      style={styles.feedbackAacBtn}
-                      activeOpacity={0.85}
-                      onPress={() => {
-                        setFeedbackStage(null); setFeedbackChoices([]); setFeedbackAacButtons([]);
-                        handleSend(btn);
-                      }}>
-                      <Text style={styles.feedbackAacText}>{btn}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              )}
-            </View>
-          )}
-
-          {/* 입력창 */}
-          <View style={styles.inputBar}>
-            <TouchableOpacity
-              style={[styles.micBtn, isListening && styles.micBtnActive]}
-              onPress={handleMicPress}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.micBtnText}>{isListening ? '⏹' : '🎤'}</Text>
-            </TouchableOpacity>
-            <TextInput
-              style={styles.input}
-              value={inputText}
-              onChangeText={setInputText}
-              placeholder={isListening ? '듣고 있어요…' : 'AI에게 말해보세요…'}
-              placeholderTextColor={isListening ? themeColor : '#94A3B8'}
-              returnKeyType="send"
-              onSubmitEditing={() => handleSend()}
-              editable={!aiLoading && !isListening}
-            />
-            <TouchableOpacity
-              style={[styles.sendBtn, { backgroundColor: themeColor }, (!inputText.trim() || aiLoading) && styles.sendBtnDisabled]}
-              onPress={() => handleSend()}
-              disabled={!inputText.trim() || aiLoading}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.sendBtnText}>전송</Text>
-            </TouchableOpacity>
-          </View>
+        {/* 연락 pill 버튼 */}
+        <View style={styles.contactRow}>
+          <TouchableOpacity
+            style={[styles.contactPill, { borderColor: theme + '60' }]}
+            activeOpacity={0.75}
+            onPress={() => Alert.alert('보호자 연락', '보호자에게 연락합니다.')}>
+            <Text style={styles.contactPillIcon}>👨‍👩‍👧</Text>
+            <Text style={[styles.contactPillText, { color: theme }]}>보호자 연락</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.contactPill, { borderColor: theme + '60' }]}
+            activeOpacity={0.75}
+            onPress={() => Alert.alert('기관 연락', '기관에 연락합니다.')}>
+            <Text style={styles.contactPillIcon}>🏢</Text>
+            <Text style={[styles.contactPillText, { color: theme }]}>기관 연락</Text>
+          </TouchableOpacity>
         </View>
 
-        {/* 사이드 드로어 */}
-        <Modal visible={showMenu} animationType="none" transparent onRequestClose={closeDrawer}>
-          <TouchableOpacity style={styles.drawerOverlay} activeOpacity={1} onPress={closeDrawer} />
-          <Animated.View style={[styles.drawer, { transform: [{ translateX: drawerAnim }] }]}>
-            <View style={styles.drawerHeader}>
-              <Text style={styles.drawerTitle}>메뉴</Text>
-              <TouchableOpacity onPress={closeDrawer} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-                <Text style={styles.drawerClose}>✕</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.drawerDivider} />
-            <TouchableOpacity style={styles.drawerItem} activeOpacity={0.7}
-              onPress={() => { closeDrawer(); setTimeout(() => setShowSchedule(true), 240); }}>
-              <Text style={styles.drawerItemIcon}>📅</Text>
-              <Text style={styles.drawerItemText}>일주일 스케줄</Text>
-            </TouchableOpacity>
-            <View style={styles.drawerDivider} />
-            <TouchableOpacity style={styles.drawerItem} activeOpacity={0.7}
-              onPress={() => {
-                closeDrawer();
-                const achieved = todaySchedules.filter(s => s.scheduled_time <= nowTime).length;
-                const total = todaySchedules.length;
-                Alert.alert('오늘 달성률', total === 0 ? '오늘 등록된 일과가 없어요.' : `${achieved} / ${total} 완료 (${Math.round(achieved / total * 100)}%)`);
-              }}>
-              <Text style={styles.drawerItemIcon}>📊</Text>
-              <Text style={styles.drawerItemText}>오늘 달성률</Text>
-            </TouchableOpacity>
-            <View style={styles.drawerDivider} />
-            <TouchableOpacity style={styles.drawerItem} activeOpacity={0.7}
-              onPress={() => { closeDrawer(); setTimeout(handleLogout, 240); }}>
-              <Text style={styles.drawerItemIcon}>🚪</Text>
-              <Text style={[styles.drawerItemText, { color: '#C9303F' }]}>로그아웃</Text>
-            </TouchableOpacity>
-          </Animated.View>
-        </Modal>
+        {/* 오늘 일과 타임라인 (flex: 1 — 남은 공간 채움) */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>오늘 남은 일과</Text>
+            <Text style={styles.sectionSub}>{DAY_LABELS[today]}요일</Text>
+          </View>
 
-        {/* 일주일 스케줄 모달 */}
-        <Modal visible={showSchedule} animationType="slide" transparent onRequestClose={() => setShowSchedule(false)}>
-          <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowSchedule(false)} />
-          <View style={styles.modalSheet}>
-            <View style={styles.modalHandle} />
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>📅 일주일 스케줄</Text>
-              <TouchableOpacity onPress={() => setShowSchedule(false)}>
-                <Text style={styles.modalClose}>✕</Text>
-              </TouchableOpacity>
-            </View>
-            {scheduleLoading ? (
-              <ActivityIndicator color={colors.primary} style={{ marginVertical: 24 }} />
-            ) : times.length === 0 ? (
-              <Text style={styles.emptyText}>등록된 스케줄이 없어요</Text>
-            ) : (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <View>
-                  <View style={styles.tableRow}>
-                    <View style={styles.timeLabelCell} />
-                    {DAY_LABELS.map((d, i) => (
-                      <View key={i} style={[styles.dayHeaderCell, i === todayIndex && styles.todayHeaderCell]}>
-                        <Text style={[styles.dayHeaderText, i === todayIndex && styles.todayHeaderText]}>{d}</Text>
-                      </View>
-                    ))}
+          {loading ? (
+            <ActivityIndicator color={theme} style={{ marginVertical: 20 }} />
+          ) : upcomingSchedules.length === 0 ? (
+            <Text style={styles.emptyText}>오늘 남은 일과가 없어요 🎉</Text>
+          ) : (
+            <ScrollView showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
+              {upcomingSchedules.map((s, i) => {
+                const isCurrent = effectiveCurrent?.id === s.id;
+                const isLast    = i === upcomingSchedules.length - 1;
+                return (
+                  <View key={s.id} style={styles.tlRow}>
+                    <View style={styles.tlTrack}>
+                      <View style={[
+                        styles.tlDot,
+                        isCurrent && { backgroundColor: theme, width: 14, height: 14, borderRadius: 7, marginLeft: -1 },
+                      ]} />
+                      {!isLast && <View style={styles.tlLine} />}
+                    </View>
+                    <View style={[
+                      styles.tlCard,
+                      isCurrent && { backgroundColor: theme + '0F', borderColor: theme + '55', borderWidth: 1.5 },
+                    ]}>
+                      <Text style={styles.tlTime}>{s.scheduled_time}</Text>
+                      <Text style={styles.tlEmoji}>{getEmoji(s.title)}</Text>
+                      <Text style={[styles.tlTitle, isCurrent && { color: theme, fontWeight: '800' }]}
+                        numberOfLines={1}>
+                        {s.title}
+                      </Text>
+                      {isCurrent && (
+                        <View style={[styles.nowBadge, { backgroundColor: theme }]}>
+                          <Text style={styles.nowBadgeText}>지금</Text>
+                        </View>
+                      )}
+                    </View>
                   </View>
-                  {times.map(time => (
-                    <View key={time} style={styles.tableRow}>
-                      <View style={styles.timeLabelCell}>
-                        <Text style={styles.timeLabelText}>{time}</Text>
-                      </View>
-                      {[0, 1, 2, 3, 4, 5, 6].map(day => {
-                        const s = grid[time]?.[day];
-                        const isToday = day === todayIndex;
-                        return (
-                          <View key={day} style={[styles.cell, isToday && styles.todayCell]}>
-                            {s ? (
-                              <Text style={styles.cellText} numberOfLines={2}>{s.title}</Text>
-                            ) : (
-                              <Text style={styles.cellEmpty}>-</Text>
-                            )}
-                          </View>
-                        );
-                      })}
+                );
+              })}
+            </ScrollView>
+          )}
+
+          {/* 일과 수정하기 */}
+          <TouchableOpacity
+            style={[styles.editBtn, { borderColor: theme + '70' }]}
+            activeOpacity={0.8}
+            onPress={() => Alert.alert('일과 수정', '일과 수정 기능은 준비 중이에요 🛠')}>
+            <Text style={[styles.editBtnText, { color: theme }]}>✏️  일과 수정하기</Text>
+          </TouchableOpacity>
+
+          {/* 🧪 테스트 버튼 — 확인 후 삭제 */}
+          <TouchableOpacity
+            style={[styles.editBtn, { borderColor: '#F59E0B70', marginTop: 6 }]}
+            activeOpacity={0.8}
+            onPress={() => announce(
+              upcomingSchedules[0] ?? { id: 9999, title: '🍽️ 저녁 식사', scheduled_time: nowTime, days_of_week: String(today) }
+            )}>
+            <Text style={[styles.editBtnText, { color: '#F59E0B' }]}>🧪 알림 테스트</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* AI 마이크 (하단 고정) */}
+        <View style={styles.micSection}>
+          <View style={[styles.micRipple, { backgroundColor: theme + '28' }]} />
+          <TouchableOpacity
+            style={[styles.micCircle, { backgroundColor: theme }]}
+            activeOpacity={0.82}
+            onPress={handleMic}
+          >
+            <View style={styles.micIconWrap}>
+              <View style={[styles.micBody, { borderColor: '#fff' }]} />
+              <View style={[styles.micArch, { borderColor: '#fff' }]} />
+              <View style={styles.micStem} />
+              <View style={styles.micBase} />
+            </View>
+          </TouchableOpacity>
+          <Text style={styles.micStatusText}>AI에게 말해보세요</Text>
+        </View>
+
+      </View>
+
+      {/* ====== 스케줄 알림 모달 ====== */}
+      <Modal visible={!!pending} animationType="fade" transparent statusBarTranslucent>
+        <View style={styles.notifyBg}>
+          <View style={styles.notifyCard}>
+            <Text style={styles.notifyEmoji}>{pending ? getEmoji(pending.title) : '📋'}</Text>
+            <Text style={styles.notifyTime}>{pending?.scheduled_time}</Text>
+            <Text style={[styles.notifyTitle, { color: theme }]}>{pending?.title}</Text>
+            <Text style={styles.notifyMsg}>지금 할 시간이에요!{'\n'}준비가 됐나요? 😊</Text>
+            <View style={styles.notifyRow}>
+              <TouchableOpacity style={[styles.notifyOk, { backgroundColor: theme }]} onPress={handleConfirm}>
+                <Text style={styles.notifyOkText}>✅  알겠어요!</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.notifyLater} onPress={handleSnooze}>
+                <Text style={styles.notifyLaterText}>⏱  이따 할게요</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ====== 드로어 ====== */}
+      <Modal visible={showMenu} animationType="none" transparent onRequestClose={closeDrawer}>
+        <TouchableOpacity style={styles.drawerBg} activeOpacity={1} onPress={closeDrawer} />
+        <Animated.View style={[styles.drawer, { transform: [{ translateX: drawerAnim }] }]}>
+          <View style={styles.drawerHead}>
+            <Text style={styles.drawerTitle}>메뉴</Text>
+            <TouchableOpacity onPress={closeDrawer} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+              <Text style={styles.drawerX}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.drawerDivider} />
+          <TouchableOpacity style={styles.drawerRow} activeOpacity={0.7}
+            onPress={() => { closeDrawer(); setTimeout(() => setShowWeek(true), 240); }}>
+            <Text style={styles.drawerRowIcon}>🗓</Text>
+            <Text style={styles.drawerRowText}>일주일 스케줄</Text>
+          </TouchableOpacity>
+          <View style={styles.drawerDivider} />
+          <TouchableOpacity style={styles.drawerRow} activeOpacity={0.7}
+            onPress={() => { closeDrawer(); handleLogout(); }}>
+            <Text style={styles.drawerRowIcon}>🚪</Text>
+            <Text style={[styles.drawerRowText, { color: '#E53E3E' }]}>로그아웃</Text>
+          </TouchableOpacity>
+        </Animated.View>
+      </Modal>
+
+      {/* ====== 일주일 스케줄 모달 ====== */}
+      <Modal visible={showWeek} animationType="slide" transparent onRequestClose={() => setShowWeek(false)}>
+        <TouchableOpacity style={styles.sheetBg} activeOpacity={1} onPress={() => setShowWeek(false)} />
+        <View style={styles.sheet}>
+          <View style={styles.sheetHandle} />
+          <View style={styles.sheetHead}>
+            <Text style={[styles.sheetTitle, { color: theme }]}>🗓  일주일 스케줄</Text>
+            <TouchableOpacity onPress={() => setShowWeek(false)}>
+              <Text style={styles.sheetX}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          {loading ? (
+            <ActivityIndicator color={theme} style={{ margin: 24 }} />
+          ) : times.length === 0 ? (
+            <Text style={styles.emptyText}>등록된 스케줄이 없어요</Text>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View>
+                <View style={styles.tr}>
+                  <View style={{ width: 48 }} />
+                  {DAY_LABELS.map((d, i) => (
+                    <View key={i} style={[styles.th, i === today && { backgroundColor: theme }]}>
+                      <Text style={[styles.thText, i === today && { color: '#fff' }]}>{d}</Text>
                     </View>
                   ))}
                 </View>
-              </ScrollView>
-            )}
-          </View>
-        </Modal>
+                {times.map(t => (
+                  <View key={t} style={styles.tr}>
+                    <View style={styles.td0}><Text style={styles.tdTime}>{t}</Text></View>
+                    {[0,1,2,3,4,5,6].map(d => {
+                      const s = grid[t]?.[d];
+                      return (
+                        <View key={d} style={[styles.td, d === today && { backgroundColor: theme + '12' }]}>
+                          {s
+                            ? <Text style={[styles.tdText, { color: theme }]} numberOfLines={2}>{s.title}</Text>
+                            : <Text style={styles.tdEmpty}>–</Text>}
+                        </View>
+                      );
+                    })}
+                  </View>
+                ))}
+              </View>
+            </ScrollView>
+          )}
+        </View>
+      </Modal>
 
-      </View>
     </SafeAreaView>
   );
 }
 
-const CELL_W = 52;
-const TIME_W = 48;
-
+// ── 스타일 ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.white },
+  root: { flex: 1, backgroundColor: '#F4F6FB' },
 
+  // 헤더
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 13,
-  },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  nextLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 12, fontWeight: '600' },
-  nextText: { color: colors.white, fontSize: 15, fontWeight: '800' },
-
-  menuBtn: {
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  menuBtnText: { color: colors.white, fontSize: 18, fontWeight: '700' },
-
-  drawerOverlay: {
-    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.35)',
-  },
-  drawer: {
-    position: 'absolute', top: 0, right: 0, bottom: 0,
-    width: DRAWER_WIDTH,
-    backgroundColor: colors.white,
-    paddingTop: 56,
-    elevation: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.18,
-    shadowRadius: 16,
-    shadowOffset: { width: -4, height: 0 },
-  },
-  drawerHeader: {
     flexDirection: 'row', alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingBottom: 16,
+    paddingHorizontal: 20, paddingTop: 14, paddingBottom: 10,
   },
-  drawerTitle: { fontSize: 18, fontWeight: '800', color: colors.text },
-  drawerClose: { fontSize: 18, color: colors.textMuted },
-  drawerDivider: { height: 1, backgroundColor: colors.border },
-  drawerItem: {
+  hLabel: { fontSize: 11, fontWeight: '600', letterSpacing: 0.4, color: '#8FA99A' },
+  hValue: { fontSize: 15, fontWeight: '800', marginTop: 2, maxWidth: SW - 80 },
+  menuBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  menuIcon: { fontSize: 16 },
+
+  body: { flex: 1, paddingHorizontal: 18, paddingTop: 16, paddingBottom: 16, gap: 12 },
+
+  // 현재 일과 카드
+  nowCard: {
+    backgroundColor: '#fff',
+    borderRadius: 22, paddingVertical: 18, paddingHorizontal: 20,
+    flexDirection: 'row', alignItems: 'center', gap: 16,
+    shadowColor: '#0A1F6B', shadowOpacity: 0.07,
+    shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 4,
+  },
+  nowEmoji: { fontSize: 64, lineHeight: 72 },
+  nowInfo: { flex: 1, gap: 6 },
+  nowChip: {
+    alignSelf: 'flex-start', fontSize: 11, fontWeight: '800',
+    letterSpacing: 0.3, paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: 20,
+  },
+  nowTitle: { fontSize: 22, fontWeight: '900', lineHeight: 28 },
+  nowTime:  { fontSize: 13, color: '#94A3B8', fontWeight: '600' },
+
+  // 연락 pill 버튼
+  contactRow: { flexDirection: 'row', gap: 10 },
+  contactPill: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 7, backgroundColor: '#fff',
+    borderRadius: 30, borderWidth: 1.5,
+    paddingVertical: 10,
+    shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 2,
+  },
+  contactPillIcon: { fontSize: 16 },
+  contactPillText: { fontSize: 13, fontWeight: '700' },
+
+  // 섹션
+  section: {
+    flex: 1,
+    backgroundColor: '#fff', borderRadius: 22,
+    padding: 18,
+    shadowColor: '#0A1F6B', shadowOpacity: 0.06,
+    shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 3,
+  },
+  sectionHeader: {
+    flexDirection: 'row', alignItems: 'baseline',
+    justifyContent: 'space-between', marginBottom: 16,
+  },
+  sectionTitle: { fontSize: 16, fontWeight: '900', color: '#1E293B' },
+  sectionSub:   { fontSize: 12, color: '#94A3B8', fontWeight: '600' },
+
+  // 타임라인
+  timeline: { gap: 0 },
+  tlRow:   { flexDirection: 'row', alignItems: 'stretch', minHeight: 60 },
+  tlTrack: { width: 24, alignItems: 'center' },
+  tlDot:   {
+    width: 12, height: 12, borderRadius: 6,
+    backgroundColor: '#CBD5E1', marginTop: 16,
+  },
+  tlLine: { flex: 1, width: 2, backgroundColor: '#E8EDF5', marginVertical: 3 },
+  tlCard: {
+    flex: 1, flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#F8FAFF', borderRadius: 14,
+    marginLeft: 10, marginVertical: 4,
+    paddingHorizontal: 14, paddingVertical: 12,
+    gap: 10, borderWidth: 1, borderColor: '#EEF1F8',
+  },
+  tlTime:  { fontSize: 12, fontWeight: '700', color: '#94A3B8', width: 40 },
+  tlEmoji: { fontSize: 22 },
+  tlTitle: { flex: 1, fontSize: 14, fontWeight: '700', color: '#334155' },
+  nowBadge: {
+    borderRadius: 20, paddingHorizontal: 9, paddingVertical: 3,
+  },
+  nowBadgeText: { fontSize: 10, fontWeight: '900', color: '#fff' },
+
+  emptyText: { fontSize: 14, color: '#94A3B8', textAlign: 'center', paddingVertical: 16 },
+
+  // 일과 수정 버튼
+  editBtn: {
+    marginTop: 14, borderRadius: 14, borderWidth: 1.5,
+    paddingVertical: 13, alignItems: 'center',
+  },
+  editBtnText: { fontSize: 14, fontWeight: '800' },
+
+  // 마이크
+  micSection: { alignItems: 'center', gap: 6 },
+  micRipple: {
+    position: 'absolute',
+    width: 80, height: 80, borderRadius: 40,
+  },
+  micCircle: {
+    width: 64, height: 64, borderRadius: 32,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOpacity: 0.22,
+    shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 8,
+  },
+  micIconWrap: { alignItems: 'center', gap: 2 },
+  micBody: {
+    width: 14, height: 20, borderRadius: 7,
+    borderWidth: 2.5, backgroundColor: 'transparent',
+  },
+  micArch: {
+    width: 22, height: 12,
+    borderBottomLeftRadius: 11, borderBottomRightRadius: 11,
+    borderLeftWidth: 2.5, borderRightWidth: 2.5, borderBottomWidth: 2.5,
+    backgroundColor: 'transparent', marginTop: -2,
+  },
+  micStem: { width: 2.5, height: 5, backgroundColor: '#fff' },
+  micBase: { width: 14, height: 2.5, borderRadius: 2, backgroundColor: '#fff' },
+  micStatusText: { fontSize: 12, fontWeight: '600', color: '#94A3B8', marginTop: 2 },
+
+  // 알림 모달
+  notifyBg: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24,
+  },
+  notifyCard: {
+    backgroundColor: '#fff', borderRadius: 28,
+    paddingVertical: 36, paddingHorizontal: 28,
+    alignItems: 'center', width: '100%', gap: 10,
+    shadowColor: '#000', shadowOpacity: 0.2,
+    shadowRadius: 24, shadowOffset: { width: 0, height: 10 }, elevation: 20,
+  },
+  notifyEmoji: { fontSize: 72, lineHeight: 82 },
+  notifyTime:  { fontSize: 14, color: '#94A3B8', fontWeight: '700' },
+  notifyTitle: { fontSize: 26, fontWeight: '900', textAlign: 'center' },
+  notifyMsg:   { fontSize: 16, color: '#475569', fontWeight: '600', textAlign: 'center', lineHeight: 24 },
+  notifyRow:   { flexDirection: 'row', gap: 10, marginTop: 12, width: '100%' },
+  notifyOk: {
+    flex: 1, borderRadius: 18, paddingVertical: 16, alignItems: 'center',
+    shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 5,
+  },
+  notifyOkText:    { color: '#fff', fontWeight: '900', fontSize: 16 },
+  notifyLater:     { flex: 1, backgroundColor: '#F1F5F9', borderRadius: 18, paddingVertical: 16, alignItems: 'center' },
+  notifyLaterText: { color: '#475569', fontWeight: '800', fontSize: 16 },
+
+  // 드로어
+  drawerBg: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.3)' },
+  drawer: {
+    position: 'absolute', top: 0, right: 0, bottom: 0,
+    width: DRAWER_W, backgroundColor: '#fff', paddingTop: 56,
+    shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 20, shadowOffset: { width: -4, height: 0 }, elevation: 16,
+  },
+  drawerHead: {
+    flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 16,
+  },
+  drawerTitle:   { fontSize: 18, fontWeight: '800', color: '#1E293B' },
+  drawerX:       { fontSize: 18, color: '#94A3B8' },
+  drawerDivider: { height: 1, backgroundColor: '#F1F5F9' },
+  drawerRow: {
     flexDirection: 'row', alignItems: 'center', gap: 14,
     paddingVertical: 18, paddingHorizontal: 20,
   },
-  drawerItemIcon: { fontSize: 20 },
-  drawerItemText: { fontSize: 16, fontWeight: '600', color: colors.text },
+  drawerRowIcon: { fontSize: 20 },
+  drawerRowText: { fontSize: 16, fontWeight: '600', color: '#1E293B' },
 
-  contactRow: { flexDirection: 'row', gap: 10, width: '100%' },
-  contactBtn: {
-    flex: 1,
-    borderRadius: 14, paddingVertical: 14,
-    alignItems: 'center', gap: 6,
-    borderWidth: 1,
+  // 일주일 바텀시트
+  sheetBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
+  sheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 26, borderTopRightRadius: 26,
+    padding: 20, paddingBottom: 36, maxHeight: '85%',
   },
-  contactIcon: { fontSize: 22 },
-  contactText: { fontSize: 13, fontWeight: '700', textAlign: 'center', lineHeight: 18 },
+  sheetHandle: {
+    width: 36, height: 4, borderRadius: 2,
+    backgroundColor: '#E2E8F0', alignSelf: 'center', marginBottom: 16,
+  },
+  sheetHead: {
+    flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'space-between', marginBottom: 16,
+  },
+  sheetTitle: { fontSize: 16, fontWeight: '800' },
+  sheetX:     { fontSize: 18, color: '#94A3B8' },
 
-  topContent: { alignItems: 'center', padding: 16, gap: 12 },
+  // 주간 그리드
+  tr:  { flexDirection: 'row' },
+  th:  { width: 52, paddingVertical: 6, alignItems: 'center', borderRadius: 8 },
+  thText: { fontSize: 12, fontWeight: '700', color: '#64748B' },
+  td0: { width: 48, paddingVertical: 8, justifyContent: 'center', alignItems: 'flex-end', paddingRight: 6 },
+  tdTime:  { fontSize: 11, color: '#94A3B8', fontWeight: '600' },
+  td: {
+    width: 52, minHeight: 44, paddingVertical: 4, paddingHorizontal: 2,
+    alignItems: 'center', justifyContent: 'center',
+    borderTopWidth: 1, borderTopColor: '#F1F5F9',
+  },
+  tdText:  { fontSize: 10, fontWeight: '700', textAlign: 'center' },
+  tdEmpty: { fontSize: 12, color: '#E2E8F0' },
 
-  emojiBig: { fontSize: 80, lineHeight: 90 },
-
-  currentCard: {
-    backgroundColor: colors.white,
-    borderRadius: 20,
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    alignItems: 'center',
-    gap: 4,
-    width: '100%',
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOpacity: 0.07,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 3 },
+  // AI 대화 오버레이
+  voiceBg: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+    zIndex: 100,
   },
-  currentLabel: { fontSize: 13, fontWeight: '700' },
-  currentTitle: { fontSize: 24, fontWeight: '900' },
-  currentTime: { fontSize: 14, color: '#94A3B8', fontWeight: '600' },
-
-  chatBox: {
-    flex: 1,
-    backgroundColor: colors.white,
-    borderTopWidth: 1,
-    borderTopColor: '#E2E8F0',
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: -2 },
+  voiceCard: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 32, borderTopRightRadius: 32,
+    paddingTop: 28, paddingBottom: 48, paddingHorizontal: 28,
+    alignItems: 'center', gap: 18,
+    shadowColor: '#000', shadowOpacity: 0.2,
+    shadowRadius: 24, shadowOffset: { width: 0, height: -6 }, elevation: 20,
   },
-  chatSection: { flex: 1, width: '100%' },
-  chatContent: { gap: 10, paddingVertical: 4, paddingHorizontal: 12 },
-  chatBubbleRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
-  chatBubbleRowUser: { justifyContent: 'flex-end' },
-  chatAvatar: { fontSize: 24 },
-  chatBubble: {
-    backgroundColor: colors.white,
-    borderRadius: 18,
-    borderBottomLeftRadius: 4,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    maxWidth: '75%',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-  },
-  chatBubbleUser: {
-    borderBottomLeftRadius: 18,
-    borderBottomRightRadius: 4,
-  },
-  chatText: { fontSize: 16, fontWeight: '600', color: '#1E293B', lineHeight: 24 },
-  chatTextUser: { color: colors.white },
-
-  actionRow: { flexDirection: 'row', gap: 12, paddingHorizontal: 12, paddingVertical: 8 },
-  btnOk: {
-    flex: 1,
-    borderRadius: 18,
-    paddingVertical: 16,
-    alignItems: 'center',
-    gap: 4,
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 3 },
-  },
-  btnOkEmoji: { fontSize: 26 },
-  btnOkText: { color: colors.white, fontWeight: '900', fontSize: 16 },
-  btnLater: {
-    flex: 1,
-    backgroundColor: colors.white,
-    borderRadius: 18,
-    paddingVertical: 16,
-    alignItems: 'center',
-    gap: 4,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-  },
-  btnLaterEmoji: { fontSize: 26 },
-  btnLaterText: { color: colors.textSub, fontWeight: '800', fontSize: 16 },
-
-  feedbackBox: { paddingHorizontal: 12, paddingVertical: 8, gap: 8 },
-  feedbackChoiceRow: { flexDirection: 'row', gap: 10 },
-  feedbackChoiceBtn: {
-    flex: 1, paddingVertical: 16, borderRadius: 16,
-    borderWidth: 2, alignItems: 'center',
-    backgroundColor: colors.white,
-    elevation: 2, shadowColor: '#000',
-    shadowOpacity: 0.07, shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-  },
-  feedbackChoiceText: { fontSize: 15, fontWeight: '900' },
-  feedbackAacRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  feedbackAacBtn: {
-    paddingHorizontal: 18, paddingVertical: 11,
-    borderRadius: 22, backgroundColor: '#F8F4FF',
-    borderWidth: 1.5, borderColor: '#D0BCFF',
-  },
-  feedbackAacText: { fontSize: 14, fontWeight: '800', color: '#5B3FA6' },
-
-  inputBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  input: {
-    flex: 1,
+  voiceClose: {
+    position: 'absolute', top: 18, right: 22,
+    width: 32, height: 32, borderRadius: 16,
     backgroundColor: '#F1F5F9',
-    borderRadius: 24,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    fontSize: 15,
-    color: '#1E293B',
+    alignItems: 'center', justifyContent: 'center',
   },
-  sendBtn: {
-    borderRadius: 20,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
+  voiceCloseText: { fontSize: 14, color: '#64748B', fontWeight: '700' },
+  voiceAvatarRing: {
+    width: 88, height: 88, borderRadius: 44,
+    borderWidth: 3, alignItems: 'center', justifyContent: 'center',
   },
-  sendBtnDisabled: { backgroundColor: '#CBD5E1' },
-  sendBtnText: { color: colors.white, fontWeight: '800', fontSize: 14 },
-
-  micBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    justifyContent: 'center',
+  voiceAvatar: {
+    width: 76, height: 76, borderRadius: 38,
+    alignItems: 'center', justifyContent: 'center',
   },
-  micBtnActive: { backgroundColor: '#FEE2E2' },
-  micBtnText: { fontSize: 20 },
-
-  emptyText: { fontSize: 14, color: '#94A3B8', textAlign: 'center', paddingVertical: 12 },
-
-  tableRow: { flexDirection: 'row' },
-  timeLabelCell: {
-    width: TIME_W,
-    paddingVertical: 8,
-    justifyContent: 'center',
-    alignItems: 'flex-end',
-    paddingRight: 6,
+  voiceAvatarEmoji: { fontSize: 36 },
+  voiceTextArea: {
+    alignItems: 'center', gap: 8,
+    minHeight: 60, width: '100%',
   },
-  timeLabelText: { fontSize: 11, color: '#94A3B8', fontWeight: '600' },
-  dayHeaderCell: {
-    width: CELL_W,
-    paddingVertical: 6,
-    alignItems: 'center',
-    borderRadius: 8,
+  voiceStatusText: {
+    fontSize: 16, fontWeight: '600', color: '#94A3B8', textAlign: 'center',
   },
-  todayHeaderCell: { backgroundColor: colors.primary },
-  dayHeaderText: { fontSize: 12, fontWeight: '700', color: '#64748B' },
-  todayHeaderText: { color: colors.white },
-  cell: {
-    width: CELL_W,
-    minHeight: 44,
-    paddingVertical: 4,
-    paddingHorizontal: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+  voiceReplyText: {
+    fontSize: 17, fontWeight: '700', color: '#1E293B',
+    textAlign: 'center', lineHeight: 26,
   },
-  todayCell: { backgroundColor: '#EFF6FF' },
-  cellText: { fontSize: 10, fontWeight: '700', color: colors.primary, textAlign: 'center' },
-  cellEmpty: { fontSize: 12, color: '#E2E8F0' },
-
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
-  modalSheet: {
-    backgroundColor: colors.white,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
-    paddingBottom: 40,
+  voiceSpokenText: {
+    fontSize: 13, color: '#94A3B8', fontStyle: 'italic', textAlign: 'center',
   },
-  modalHandle: {
-    width: 40, height: 4, borderRadius: 2,
-    backgroundColor: '#E2E8F0',
-    alignSelf: 'center',
-    marginBottom: 16,
+  voiceMicBtn: {
+    width: 72, height: 72, borderRadius: 36,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOpacity: 0.18,
+    shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 7,
   },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
+  voiceMicLabel: {
+    fontSize: 12, fontWeight: '600', color: '#94A3B8', marginTop: -6,
   },
-  modalTitle: { fontSize: 16, fontWeight: '800', color: colors.primary },
-  modalClose: { fontSize: 18, color: '#94A3B8', fontWeight: '600' },
 });

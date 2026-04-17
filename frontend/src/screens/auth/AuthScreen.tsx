@@ -75,7 +75,7 @@ export default function AuthScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#dce8ff' },
+  container: { flex: 1, backgroundColor: '#D4EDD4' },
   inner: {
     flex: 1,
     paddingHorizontal: 28,

@@ -180,7 +180,7 @@ export default function LoginScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f4f7ff' },
+  container: { flex: 1, backgroundColor: '#F4FAF7' },
 
   header: { paddingHorizontal: 20, paddingTop: 12 },
   backBtn: {
@@ -202,7 +202,7 @@ const styles = StyleSheet.create({
 
   tabRow: {
     flexDirection: 'row',
-    backgroundColor: '#e4eaf8',
+    backgroundColor: '#E4F2EA',
     borderRadius: 16,
     padding: 4,
     gap: 4,
@@ -286,7 +286,7 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 3 },
   },
-  loginBtnDisabled: { backgroundColor: '#c5d0e8', elevation: 0, shadowOpacity: 0 },
+  loginBtnDisabled: { backgroundColor: '#A8D8C0', elevation: 0, shadowOpacity: 0 },
   loginBtnText: { color: colors.white, fontWeight: '800', fontSize: 17 },
 
   signupLink: { alignItems: 'center' },

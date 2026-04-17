@@ -206,7 +206,7 @@ export default function AccountSetupScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f4f7ff' },
+  container: { flex: 1, backgroundColor: '#F4FAF7' },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8,
@@ -262,6 +262,6 @@ const styles = StyleSheet.create({
     shadowColor: colors.guardian, shadowOpacity: 0.3, shadowRadius: 10,
     shadowOffset: { width: 0, height: 3 },
   },
-  nextBtnDisabled: { backgroundColor: '#c5d0e8', elevation: 0, shadowOpacity: 0 },
+  nextBtnDisabled: { backgroundColor: '#A8D8C0', elevation: 0, shadowOpacity: 0 },
   nextBtnText: { color: colors.white, fontWeight: '800', fontSize: 16 },
 });

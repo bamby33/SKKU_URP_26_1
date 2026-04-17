@@ -242,7 +242,7 @@ export default function PreferencesScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f4f7ff' },
+  container: { flex: 1, backgroundColor: '#F4FAF7' },
 
   header: {
     flexDirection: 'row',
@@ -328,7 +328,7 @@ const styles = StyleSheet.create({
   inputRow: { flexDirection: 'row', gap: 8 },
   tagInput: {
     flex: 1,
-    backgroundColor: '#f4f7ff',
+    backgroundColor: '#F4FAF7',
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,

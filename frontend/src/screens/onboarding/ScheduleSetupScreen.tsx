@@ -610,7 +610,7 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
 
 // ── 스타일 ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f4f7ff' },
+  container: { flex: 1, backgroundColor: '#F4FAF7' },
 
   // 공통
   backBtn:  { alignSelf: 'flex-start', paddingHorizontal: 14, paddingVertical: 8, backgroundColor: colors.primaryBg, borderRadius: 20 },
@@ -641,29 +641,29 @@ const styles = StyleSheet.create({
   shortcutText:{ fontSize: 13, fontWeight: '700', color: colors.primary },
 
   dayToggleRow: { flexDirection: 'row', gap: 6 },
-  dayToggle:    { width: 36, height: 36, borderRadius: 18, backgroundColor: '#eef', alignItems: 'center', justifyContent: 'center' },
+  dayToggle:    { width: 36, height: 36, borderRadius: 18, backgroundColor: '#E8F5EE', alignItems: 'center', justifyContent: 'center' },
   dayToggleOn:  { backgroundColor: colors.primary },
   dayToggleText:    { fontSize: 13, fontWeight: '700', color: '#888' },
   dayToggleTextOn:  { color: '#fff' },
 
   timeRow:   { flexDirection: 'row', alignItems: 'center' },
   timeInput: {
-    flex: 1, backgroundColor: '#f4f7ff', borderRadius: 12,
+    flex: 1, backgroundColor: '#F4FAF7', borderRadius: 12,
     paddingHorizontal: 14, paddingVertical: 11,
     fontSize: 16, fontWeight: '700', color: colors.text,
     borderWidth: 1.5, borderColor: colors.border, textAlign: 'center',
   },
 
-  chip:     { paddingHorizontal: 12, paddingVertical: 7, backgroundColor: '#eef', borderRadius: 20 },
+  chip:     { paddingHorizontal: 12, paddingVertical: 7, backgroundColor: '#E8F5EE', borderRadius: 20 },
   chipText: { fontSize: 13, fontWeight: '700', color: colors.primary },
 
   nameInput: {
-    backgroundColor: '#f4f7ff', borderRadius: 12,
+    backgroundColor: '#F4FAF7', borderRadius: 12,
     paddingHorizontal: 14, paddingVertical: 11, fontSize: 15, color: colors.text,
     borderWidth: 1.5, borderColor: colors.border,
   },
   addBtn:         { marginTop: 14, backgroundColor: colors.primary, borderRadius: 14, paddingVertical: 13, alignItems: 'center' },
-  addBtnDisabled: { backgroundColor: '#c5d0e8' },
+  addBtnDisabled: { backgroundColor: '#A8D8C0' },
   addBtnText:     { color: '#fff', fontWeight: '800', fontSize: 15 },
 
   recurListTitle: { fontSize: 13, fontWeight: '800', color: colors.primary },
@@ -695,7 +695,7 @@ const styles = StyleSheet.create({
   doneBtn:      { backgroundColor: colors.primary, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 8 },
   doneBtnText:  { color: '#fff', fontWeight: '800', fontSize: 14 },
 
-  tabRow:       { flexDirection: 'row', backgroundColor: '#e4eaf8', padding: 6, gap: 6 },
+  tabRow:       { flexDirection: 'row', backgroundColor: '#E4F2EA', padding: 6, gap: 6 },
   tabBtn:       { flex: 1, paddingVertical: 10, borderRadius: 12, alignItems: 'center' },
   tabBtnActive: { backgroundColor: colors.primary },
   tabText:      { fontSize: 13, fontWeight: '700', color: '#888' },
@@ -740,21 +740,21 @@ const styles = StyleSheet.create({
   modalSub:      { fontSize: 14, color: '#888', marginBottom: 16 },
   modalLabel:    { fontSize: 12, fontWeight: '700', color: '#666', marginBottom: 8 },
   modalInput:    {
-    backgroundColor: '#f4f7ff', borderRadius: 12,
+    backgroundColor: '#F4FAF7', borderRadius: 12,
     paddingHorizontal: 14, paddingVertical: 11, fontSize: 15, color: colors.text,
     borderWidth: 1.5, borderColor: colors.border, marginBottom: 14,
   },
-  modalDayBtn:       { width: 36, height: 36, borderRadius: 18, backgroundColor: '#eef', alignItems: 'center', justifyContent: 'center' },
+  modalDayBtn:       { width: 36, height: 36, borderRadius: 18, backgroundColor: '#E8F5EE', alignItems: 'center', justifyContent: 'center' },
   modalDayBtnActive: { backgroundColor: colors.primary },
   modalDayText:      { fontSize: 13, fontWeight: '700', color: '#888' },
   modalTimeRow:      { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
   modalTimeInput:    {
-    flex: 1, backgroundColor: '#f4f7ff', borderRadius: 12,
+    flex: 1, backgroundColor: '#F4FAF7', borderRadius: 12,
     paddingHorizontal: 14, paddingVertical: 11, fontSize: 16, fontWeight: '700', color: colors.text,
     borderWidth: 1.5, borderColor: colors.border, textAlign: 'center',
   },
   modalBtns:       { flexDirection: 'row', gap: 10 },
-  modalCancelBtn:  { flex: 1, paddingVertical: 13, borderRadius: 14, backgroundColor: '#eef', alignItems: 'center' },
+  modalCancelBtn:  { flex: 1, paddingVertical: 13, borderRadius: 14, backgroundColor: '#E8F5EE', alignItems: 'center' },
   modalCancelText: { fontSize: 15, fontWeight: '700', color: '#888' },
   modalConfirmBtn: {
     flex: 2, paddingVertical: 13, borderRadius: 14, backgroundColor: colors.primary, alignItems: 'center',
