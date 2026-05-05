@@ -1,8 +1,6 @@
 import axios from 'axios';
 
-// Android 에뮬레이터: 10.0.2.2 / 실제 iPhone: 10.5.5.72
-const DEV_MODE: 'emulator' | 'iphone' = 'emulator';
-const BASE_URL = DEV_MODE === 'iphone' ? 'http://10.5.5.72:8000' : 'http://10.0.2.2:8000';
+const BASE_URL = 'http://172.30.1.96:8000';
 
 export const api = axios.create({
   baseURL: BASE_URL,

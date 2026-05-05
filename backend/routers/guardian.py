@@ -186,6 +186,18 @@ def send_emergency(user_id: int, db: Session = Depends(get_db)):
     return {"success": True, "recipient": result.get("recipient")}
 
 
+@router.post("/user/{user_id}/test-sms")
+def test_sms(user_id: int, db: Session = Depends(get_db)):
+    """SMS 발송 테스트 (개발용)"""
+    from agents.tools.messaging import send_message as sms_send
+    result = sms_send(
+        user_id=user_id,
+        message_type="emergency",
+        extra_info="SMS 연동 테스트 메시지입니다."
+    )
+    return result
+
+
 @router.put("/user/{user_id}/mark-alerts-read")
 def mark_alerts_read(user_id: int, db: Session = Depends(get_db)):
     """오늘의 확인사항 모두 읽음 처리 (빨간 점 제거)"""

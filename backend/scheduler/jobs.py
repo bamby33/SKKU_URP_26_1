@@ -6,6 +6,8 @@ APScheduler 기반 자동 스케줄 작업
 """
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
+from datetime import timedelta
 from sqlalchemy.orm import Session
 from models.database import (
     SessionLocal, User, Schedule, ScheduleLog, ScheduleStatus,
@@ -150,6 +152,44 @@ async def send_daily_report():
             logger.info(f"[일일리포트] user={user.id} 완료 achieved={achieved_count}/{total_count}")
     finally:
         db.close()
+
+
+async def send_stage3_followup(user_id: int):
+    """stage_3 발생 60분 후 — 부드러운 대화 시작 메시지 DB 저장"""
+    from models.database import ChatMessage
+    db = SessionLocal()
+    try:
+        result = agent_chat(
+            user_id=user_id,
+            message="(60분 경과 — 사용자가 아까 흥분했다가 진정된 상황. 부드럽게 대화를 시작하며 어떤 기분이었는지 물어보세요.)",
+        )
+        reply = result.get("reply") or "아까 어떤 기분이 들었는지 이야기해볼 수 있어요? 😊"
+        db.add(ChatMessage(user_id=user_id, role="assistant", content=reply))
+        db.commit()
+        logger.info(f"[stage3 followup] user={user_id} 메시지 저장 완료")
+    except Exception as e:
+        logger.error(f"[stage3 followup] 오류 user={user_id}: {e}")
+    finally:
+        db.close()
+
+
+def schedule_stage3_followup(user_id: int, delay_minutes: int = 60):
+    """stage_3 followup 잡 예약"""
+    run_at = datetime.utcnow() + timedelta(minutes=delay_minutes)
+    job_id = f"stage3_followup_{user_id}"
+
+    # 이미 예약된 잡이 있으면 덮어씀
+    if scheduler.get_job(job_id):
+        scheduler.remove_job(job_id)
+
+    scheduler.add_job(
+        send_stage3_followup,
+        DateTrigger(run_date=run_at),
+        args=[user_id],
+        id=job_id,
+        replace_existing=True,
+    )
+    logger.info(f"[stage3 followup] 예약 user={user_id} 실행시각={run_at.isoformat()}")
 
 
 def register_schedule_jobs(db: Session):

@@ -69,6 +69,28 @@ export default function EmergencyScreen({ navigation, route }: Props) {
   const config = STAGE_CONFIG[stage];
   const [listening, setListening] = useState(true);
   const [sending, setSending] = useState(false);
+  const [calming, setCalming] = useState(false);
+
+  const handleCalmDown = async () => {
+    setCalming(true);
+    try {
+      const userId = await AsyncStorage.getItem('user_id');
+      if (userId) {
+        const uid = Number(userId);
+        // 60분 후 followup 예약
+        api.post(`/chat/schedule-followup/${uid}`).catch(() => {});
+        // 백그라운드에서 stage_3 로그 기록
+        api.post('/chat/', {
+          user_id: uid,
+          message: '(진정됨 — stage_3 전환)',
+          context: {},
+        }).catch(() => {});
+      }
+    } finally {
+      setCalming(false);
+      navigation.replace('Emergency', { stage: 'stage_3' });
+    }
+  };
 
   const handleCallGuardian = () => {
     Alert.alert('보호자 알림', '보호자에게 긴급 알림을 보냅니다.', [
@@ -156,6 +178,21 @@ export default function EmergencyScreen({ navigation, route }: Props) {
             <Text style={styles.voiceHint}>느낌이나 원하는 걸 말해주면 도와줄게요</Text>
           </View>
         </View>
+
+        {/* stage_2 전용: 진정됐어요 버튼 */}
+        {stage === 'stage_2' && (
+          <TouchableOpacity
+            style={styles.calmBtn}
+            onPress={handleCalmDown}
+            disabled={calming}
+            activeOpacity={0.8}
+          >
+            {calming
+              ? <ActivityIndicator color="#2D6A4F" />
+              : <Text style={styles.calmBtnText}>😌  이제 괜찮아요</Text>
+            }
+          </TouchableOpacity>
+        )}
 
         {/* 보호자 알림 */}
         <TouchableOpacity style={styles.contactBtn} onPress={handleCallGuardian} disabled={sending}>
@@ -245,6 +282,16 @@ const styles = StyleSheet.create({
   voiceLabel: { fontSize: 13, fontWeight: '700', color: colors.primary },
   voiceLabelListening: { color: colors.alert },
   voiceHint: { fontSize: 10, color: '#999', marginTop: 2 },
+
+  calmBtn: {
+    backgroundColor: '#D1FAE5',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#6EE7B7',
+  },
+  calmBtnText: { color: '#2D6A4F', fontWeight: '900', fontSize: 15 },
 
   contactBtn: {
     backgroundColor: colors.alert,

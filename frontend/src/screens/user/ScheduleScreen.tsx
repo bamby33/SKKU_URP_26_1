@@ -9,6 +9,7 @@ import {
   Modal, Dimensions,
 } from 'react-native';
 import * as Speech from 'expo-speech';
+import { Audio } from 'expo-av';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -44,9 +45,13 @@ const DRAWER_W = 260;
 export default function ScheduleScreen({ navigation }: Props) {
   const bounceAnim   = useRef(new Animated.Value(0)).current;
   const drawerAnim   = useRef(new Animated.Value(DRAWER_W)).current;
-  const announcedRef = useRef<Set<number>>(new Set());
-  const snoozeRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const announcedRef  = useRef<Set<number>>(new Set());
+  const snoozeRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
   const todaySchedRef = useRef<Schedule[]>([]);
+  const recordingRef    = useRef<Audio.Recording | null>(null);
+  const meterInterval   = useRef<ReturnType<typeof setInterval> | null>(null);
+  const userIdRef       = useRef<number | null>(null);
+  const lastApiCallRef  = useRef<number>(0); // API 디바운스용
 
   const [schedules,        setSchedules]        = useState<Schedule[]>([]);
   const [loading,          setLoading]          = useState(true);
@@ -57,6 +62,7 @@ export default function ScheduleScreen({ navigation }: Props) {
   const [nowTime,          setNowTime]          = useState(nowHHMM());
   const [changeRequests,   setChangeRequests]   = useState<any[]>([]);
   const [respondingId,     setRespondingId]     = useState<number | null>(null);
+  const [liveDb,           setLiveDb]           = useState<number | null>(null);
 
   // 시간 갱신 (1분마다)
   useEffect(() => {
@@ -140,6 +146,7 @@ export default function ScheduleScreen({ navigation }: Props) {
         const stored = await AsyncStorage.getItem('user_id');
         if (!stored) return;
         const id = Number(stored);
+        userIdRef.current = id;
         const col = await AsyncStorage.getItem('theme_color');
         if (col) setTheme(col);
         const res = await getSchedules(id);
@@ -150,6 +157,82 @@ export default function ScheduleScreen({ navigation }: Props) {
       finally { setLoading(false); }
     })();
   }, []);
+
+  // ── 데시벨 모니터링 ────────────────────────────────────────────────────────
+  const DB_STAGE2 = 85;
+  const DB_STAGE1 = 70;
+
+  const startMeterting = async () => {
+    try {
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status !== 'granted') {
+        console.warn('[Meter] 마이크 권한 없음');
+        return;
+      }
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      const { recording } = await Audio.Recording.createAsync({
+        ...Audio.RecordingOptionsPresets.HIGH_QUALITY,
+        isMeteringEnabled: true,
+      });
+      recordingRef.current = recording;
+
+      meterInterval.current = setInterval(async () => {
+        const s = await recording.getStatusAsync();
+        if (!s.isRecording) return;
+        const raw = s.metering ?? -160;
+        // expo-av: -160~0 dBFS. +100 오프셋으로 대략적인 dB 환산
+        const approxDB = raw + 100;
+        setLiveDb(Math.round(approxDB));
+        console.log(`[Meter] raw=${raw.toFixed(1)} approx=${approxDB.toFixed(1)} dB`);
+
+        if (approxDB >= DB_STAGE2) {
+          await stopMetering();
+          setPending(null);
+          navigation.navigate('Emergency', { stage: 'stage_2' });
+          const uid = userIdRef.current;
+          if (uid) {
+            api.post('/chat/', {
+              user_id: uid,
+              message: '(스케줄 알림 중 반응 감지)',
+              context: { decibel: approxDB },
+            }).catch(() => {});
+          }
+        } else if (approxDB >= DB_STAGE1) {
+          // 30초에 한 번만 API 호출 (429 방지)
+          const now = Date.now();
+          if (now - lastApiCallRef.current > 30000) {
+            lastApiCallRef.current = now;
+            const uid = userIdRef.current;
+            if (uid) {
+              api.post('/chat/', {
+                user_id: uid,
+                message: '(스케줄 알림 중 반응 감지)',
+                context: { decibel: approxDB },
+              }).catch(() => {});
+            }
+          }
+        }
+      }, 500);
+    } catch (e) { console.warn('[Meter] 시작 실패', e); }
+  };
+
+  const stopMetering = async () => {
+    if (meterInterval.current) { clearInterval(meterInterval.current); meterInterval.current = null; }
+    setLiveDb(null);
+    if (recordingRef.current) {
+      try { await recordingRef.current.stopAndUnloadAsync(); } catch {}
+      recordingRef.current = null;
+    }
+  };
+
+  // pending 모달 열릴 때 메터링 시작 / 닫힐 때 중지
+  useEffect(() => {
+    if (pending) {
+      startMeterting();
+    } else {
+      stopMetering();
+    }
+  }, [pending]);
 
   const handleRespondRequest = async (reqId: number, accept: boolean) => {
     setRespondingId(reqId);
@@ -393,6 +476,16 @@ export default function ScheduleScreen({ navigation }: Props) {
             <Text style={styles.notifyTime}>{pending?.scheduled_time}</Text>
             <Text style={[styles.notifyTitle, { color: theme }]}>{pending?.title}</Text>
             <Text style={styles.notifyMsg}>지금 할 시간이에요!{'\n'}준비가 됐나요? 😊</Text>
+            {liveDb !== null && (
+              <View style={styles.dbMeter}>
+                <View style={[
+                  styles.dbBar,
+                  { width: `${Math.min(100, Math.max(0, liveDb))}%` as any,
+                    backgroundColor: liveDb >= DB_STAGE2 ? '#EF4444' : liveDb >= DB_STAGE1 ? '#F59E0B' : '#22C55E' }
+                ]} />
+                <Text style={styles.dbLabel}>{liveDb} dB</Text>
+              </View>
+            )}
             <View style={styles.notifyRow}>
               <TouchableOpacity style={[styles.notifyOk, { backgroundColor: theme }]} onPress={handleConfirm}>
                 <Text style={styles.notifyOkText}>✅  알겠어요!</Text>
@@ -653,6 +746,14 @@ const styles = StyleSheet.create({
   notifyOkText:    { color: '#fff', fontWeight: '900', fontSize: 16 },
   notifyLater:     { flex: 1, backgroundColor: '#F1F5F9', borderRadius: 18, paddingVertical: 16, alignItems: 'center' },
   notifyLaterText: { color: '#475569', fontWeight: '800', fontSize: 16 },
+
+  // dB 미터
+  dbMeter: {
+    width: '100%', height: 28, backgroundColor: '#F1F5F9',
+    borderRadius: 14, overflow: 'hidden', justifyContent: 'center',
+  },
+  dbBar: { position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 14 },
+  dbLabel: { textAlign: 'center', fontSize: 12, fontWeight: '800', color: '#1E293B', zIndex: 1 },
 
   // 드로어
   drawerBg: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.3)' },

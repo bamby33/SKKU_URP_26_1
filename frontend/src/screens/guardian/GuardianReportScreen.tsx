@@ -122,6 +122,22 @@ export default function GuardianReportScreen({ navigation }: Props) {
     } catch {}
   };
 
+  const handleTestSms = async () => {
+    const userId = await AsyncStorage.getItem('user_id');
+    if (!userId) return;
+    try {
+      const res = await api.post(`/guardian/user/${userId}/test-sms`);
+      const { sms_sent, recipient, content } = res.data;
+      if (sms_sent) {
+        Alert.alert('SMS 발송 완료 ✅', `수신: ${recipient}\n\n${content}`);
+      } else {
+        Alert.alert('콘솔 출력 (SMS 미설정)', `수신: ${recipient}\n\n${content}\n\n.env에 Twilio 정보를 입력하면 실제 SMS가 발송돼요.`);
+      }
+    } catch {
+      Alert.alert('오류', 'SMS 테스트에 실패했어요.');
+    }
+  };
+
   const handleLogout = () => {
     Alert.alert('로그아웃', '로그아웃 하시겠어요?', [
       { text: '취소', style: 'cancel' },
@@ -150,9 +166,14 @@ export default function GuardianReportScreen({ navigation }: Props) {
           <Text style={styles.headerIcon}>📊</Text>
           <Text style={styles.headerTitle}>AI 돌봄 · 보호자</Text>
         </View>
-        <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.75}>
-          <Text style={styles.logoutText}>🚪 로그아웃</Text>
-        </TouchableOpacity>
+        <View style={styles.headerRight}>
+          <TouchableOpacity style={styles.smsTestBtn} onPress={handleTestSms} activeOpacity={0.75}>
+            <Text style={styles.smsTestText}>📱 SMS 테스트</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.75}>
+            <Text style={styles.logoutText}>🚪 로그아웃</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {loading ? (
@@ -337,6 +358,14 @@ const styles = StyleSheet.create({
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   headerIcon: { fontSize: 18 },
   headerTitle: { color: colors.white, fontWeight: '700', fontSize: 15 },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  smsTestBtn: {
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  smsTestText: { color: colors.white, fontSize: 11, fontWeight: '700' },
   logoutBtn: {
     backgroundColor: 'rgba(255,255,255,0.18)',
     borderRadius: 20,

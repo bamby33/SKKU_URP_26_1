@@ -80,6 +80,17 @@ def send_message(data: ChatRequest, db: Session = Depends(get_db)):
     return result
 
 
+@router.post("/schedule-followup/{user_id}")
+def schedule_followup(user_id: int, db: Session = Depends(get_db)):
+    """stage_3 진정 후 60분 뒤 followup 메시지 예약"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+    from scheduler.jobs import schedule_stage3_followup
+    schedule_stage3_followup(user_id, delay_minutes=60)
+    return {"success": True, "message": "60분 후 followup 예약 완료"}
+
+
 @router.get("/history/{user_id}")
 def get_history(user_id: int, limit: int = 20, db: Session = Depends(get_db)):
     """대화 기록 조회"""

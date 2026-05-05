@@ -25,6 +25,8 @@ type Message = {
   id: number;
   role: 'user' | 'assistant';
   content: string;
+  choices?: string[];
+  aacButtons?: string[];
 };
 
 const GREETING = '안녕하세요! 무엇을 도와드릴까요? 😊';
@@ -164,17 +166,29 @@ export default function AIChatScreen({ navigation }: Props) {
   };
 
   // ── AI 전송 ────────────────────────────────────────────────────────────────
-  const handleSend = async (text: string) => {
+  const clearChoices = (msgId: number) => {
+    setMessages(prev => prev.map(m => m.id === msgId ? { ...m, choices: undefined, aacButtons: undefined } : m));
+  };
+
+  const handleSend = async (text: string, fromMsgId?: number) => {
     if (!userId || aiLoading || !text.trim()) return;
+
+    // 버튼 선택 시 해당 메시지의 선택지 제거
+    if (fromMsgId !== undefined) clearChoices(fromMsgId);
 
     setMessages(prev => [...prev, { id: Date.now(), role: 'user', content: text }]);
     setAiLoading(true);
 
     try {
       const res = await sendChat(userId, text);
-      const { reply, stage } = res.data;
+      const { reply, stage, feedback } = res.data;
       if (reply) {
-        setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: reply }]);
+        const newMsg: Message = { id: Date.now() + 1, role: 'assistant', content: reply };
+        if (stage === 'stage_1' && feedback) {
+          newMsg.choices    = feedback.choices    ?? undefined;
+          newMsg.aacButtons = feedback.aac_buttons ?? undefined;
+        }
+        setMessages(prev => [...prev, newMsg]);
         Speech.speak(reply, { language: 'ko-KR' });
       }
       if (stage === 'stage_2') navigation.navigate('Emergency', { stage: 'stage_2' });
@@ -231,28 +245,55 @@ export default function AIChatScreen({ navigation }: Props) {
             showsVerticalScrollIndicator={false}
           >
             {messages.map(msg => (
-              <View
-                key={msg.id}
-                style={[styles.bubbleRow, msg.role === 'user' && styles.bubbleRowUser]}
-              >
-                {msg.role === 'assistant' && (
-                  <View style={[styles.avatarSmall, { backgroundColor: theme + '18' }]}>
-                    <WaveformIcon state="idle" color={theme} barH={13} barW={2} gap={2} />
-                  </View>
-                )}
-                <View style={[
-                  styles.bubble,
-                  msg.role === 'user'
-                    ? { backgroundColor: theme }
-                    : { backgroundColor: '#fff' },
-                ]}>
-                  <Text style={[
-                    styles.bubbleText,
-                    msg.role === 'user' && { color: '#fff' },
+              <View key={msg.id}>
+                <View style={[styles.bubbleRow, msg.role === 'user' && styles.bubbleRowUser]}>
+                  {msg.role === 'assistant' && (
+                    <View style={[styles.avatarSmall, { backgroundColor: theme + '18' }]}>
+                      <WaveformIcon state="idle" color={theme} barH={13} barW={2} gap={2} />
+                    </View>
+                  )}
+                  <View style={[
+                    styles.bubble,
+                    msg.role === 'user'
+                      ? { backgroundColor: theme }
+                      : { backgroundColor: '#fff' },
                   ]}>
-                    {msg.content}
-                  </Text>
+                    <Text style={[
+                      styles.bubbleText,
+                      msg.role === 'user' && { color: '#fff' },
+                    ]}>
+                      {msg.content}
+                    </Text>
+                  </View>
                 </View>
+
+                {/* stage_1 선택지 버튼 */}
+                {msg.role === 'assistant' && (msg.choices?.length || msg.aacButtons?.length) ? (
+                  <View style={styles.choicesWrap}>
+                    {msg.choices?.map((c, i) => (
+                      <TouchableOpacity
+                        key={`c-${i}`}
+                        style={[styles.choiceBtn, { borderColor: theme }]}
+                        onPress={() => handleSend(c, msg.id)}
+                        disabled={aiLoading}
+                        activeOpacity={0.75}
+                      >
+                        <Text style={[styles.choiceBtnText, { color: theme }]}>{c}</Text>
+                      </TouchableOpacity>
+                    ))}
+                    {msg.aacButtons?.map((b, i) => (
+                      <TouchableOpacity
+                        key={`a-${i}`}
+                        style={[styles.aacBtn, { backgroundColor: theme + '18', borderColor: theme + '40' }]}
+                        onPress={() => handleSend(b, msg.id)}
+                        disabled={aiLoading}
+                        activeOpacity={0.75}
+                      >
+                        <Text style={[styles.aacBtnText, { color: theme }]}>{b}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                ) : null}
               </View>
             ))}
 
@@ -424,4 +465,21 @@ const styles = StyleSheet.create({
   micStem: { width: 2.5, height: 4, backgroundColor: '#fff' },
   micBase: { width: 13, height: 2.5, borderRadius: 2, backgroundColor: '#fff' },
   micLabel: { fontSize: 12, fontWeight: '600', color: '#94A3B8' },
+
+  // stage_1 선택지
+  choicesWrap: {
+    marginLeft: 40, marginTop: 6, gap: 8,
+    flexDirection: 'row', flexWrap: 'wrap',
+  },
+  choiceBtn: {
+    paddingHorizontal: 16, paddingVertical: 10,
+    borderRadius: 20, borderWidth: 1.5,
+    backgroundColor: '#fff',
+  },
+  choiceBtnText: { fontSize: 14, fontWeight: '700' },
+  aacBtn: {
+    paddingHorizontal: 14, paddingVertical: 8,
+    borderRadius: 20, borderWidth: 1,
+  },
+  aacBtnText: { fontSize: 13, fontWeight: '600' },
 });
