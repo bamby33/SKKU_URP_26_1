@@ -304,6 +304,19 @@ export default function GuardianReportScreen({ navigation }: Props) {
               <Text style={[styles.emptyText, { color: '#BFDBFE' }]}>내일 등록된 스케줄이 없어요.</Text>
             </View>
           )}
+
+          {/* ── 5. 일과 수정 ── */}
+          <TouchableOpacity
+            style={styles.editBtn}
+            activeOpacity={0.8}
+            onPress={() => Alert.alert('일과 수정', '어떤 일과를 수정할까요?', [
+              { text: '취소', style: 'cancel' },
+              { text: '오늘 일과 수정', onPress: () => navigation.navigate('TodayScheduleEdit') },
+              { text: '일주일 일과 수정', onPress: () => navigation.navigate('WeekScheduleEdit') },
+            ])}
+          >
+            <Text style={styles.editBtnText}>✏️  일과 수정하기</Text>
+          </TouchableOpacity>
         </ScrollView>
       )}
     </SafeAreaView>
@@ -458,6 +471,14 @@ const styles = StyleSheet.create({
   },
   aiTitle: { fontWeight: '800', color: colors.guardian, marginBottom: 6, fontSize: 13 },
   aiBody: { fontSize: 12, color: '#065F46', lineHeight: 20, opacity: 0.85 },
+
+  /* 일과 수정 버튼 */
+  editBtn: {
+    borderRadius: 16, borderWidth: 1.5, borderColor: colors.guardian + '70',
+    paddingVertical: 14, alignItems: 'center', backgroundColor: colors.white,
+    elevation: 2, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+  },
+  editBtnText: { fontSize: 14, fontWeight: '800', color: colors.guardian },
 
   /* 내일 스케줄 */
   tomorrowCard: {

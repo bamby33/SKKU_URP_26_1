@@ -175,6 +175,17 @@ def get_dashboard(user_id: int, db: Session = Depends(get_db)):
     }
 
 
+@router.post("/user/{user_id}/emergency")
+def send_emergency(user_id: int, db: Session = Depends(get_db)):
+    """당사자가 보호자에게 긴급 알림 발송"""
+    from agents.tools.messaging import send_message as sms_send
+    result = sms_send(user_id=user_id, message_type="emergency", extra_info="당사자가 직접 보호자 호출을 요청했습니다.")
+    if not result.get("success"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail="알림 발송 실패")
+    return {"success": True, "recipient": result.get("recipient")}
+
+
 @router.put("/user/{user_id}/mark-alerts-read")
 def mark_alerts_read(user_id: int, db: Session = Depends(get_db)):
     """오늘의 확인사항 모두 읽음 처리 (빨간 점 제거)"""

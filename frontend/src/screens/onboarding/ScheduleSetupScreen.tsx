@@ -7,13 +7,14 @@ import React, { useState, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   ScrollView, Modal, PanResponder, Dimensions,
-  KeyboardAvoidingView, Platform,
+  KeyboardAvoidingView, Platform, ActivityIndicator, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
+import { api } from '../../api/client';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'ScheduleSetup'>;
@@ -123,7 +124,7 @@ function buildBlocks(recurItems: RecurItem[]): Block[] {
 
 // ── 컴포넌트 ──────────────────────────────────────────────────────────────────
 export default function ScheduleSetupScreen({ navigation, route }: Props) {
-  const { userName, age, gender, disabilityType, likes, dislikes, themeColor } = route.params;
+  const { userName, age, gender, disabilityType, occupation, likes, dislikes, themeColor } = route.params;
 
   const [phase, setPhase] = useState<'input' | 'preview'>('input');
 
@@ -137,9 +138,10 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
   const [actColor,   setActColor]   = useState('#6B9BF2');
 
   // ── Phase 2 ──
-  const [tab,    setTab]    = useState<'weekday' | 'weekend'>('weekday');
-  const [blocks, setBlocks] = useState<Block[]>([]);
-  const [floating, setFloating] = useState<{ item: PaletteItem; x: number; y: number } | null>(null);
+  const [tab,       setTab]       = useState<'weekday' | 'weekend'>('weekday');
+  const [blocks,    setBlocks]    = useState<Block[]>([]);
+  const [floating,  setFloating]  = useState<{ item: PaletteItem; x: number; y: number } | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
 
   // 그리드 측정
   const rootRef      = useRef<View>(null);
@@ -301,11 +303,45 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
     );
   };
 
+  // ── AI 추천 ──────────────────────────────────────────────────────────────
+  const handleAiSuggest = () => {
+    Alert.alert(
+      '✨ AI 맞춤 시간표',
+      `${userName}의 정보를 바탕으로 AI가 시간표를 추천해줄게요.\n현재 시간표는 교체됩니다.`,
+      [
+        { text: '취소', style: 'cancel' },
+        { text: 'AI 추천 받기', onPress: doAiSuggest },
+      ],
+    );
+  };
+
+  const doAiSuggest = async () => {
+    setAiLoading(true);
+    try {
+      const res = await api.post('/ai/suggest-schedule-onboarding', {
+        name: userName,
+        age,
+        gender,
+        disability_type: disabilityType,
+        occupation,
+        likes,
+        dislikes,
+      });
+      const suggested: Omit<Block, 'id'>[] = res.data.blocks;
+      setBlocks(suggested.map(b => ({ ...b, id: nid() })));
+    } catch (e: any) {
+      const msg = e?.response?.data?.detail ?? 'AI 추천 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.';
+      Alert.alert('오류', msg);
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   // ── 완료 ──────────────────────────────────────────────────────────────────
   const handleComplete = () => {
     navigation.navigate('AccountSetup', {
       userName, age, gender, likes, dislikes, themeColor,
-      disabilityType,
+      disabilityType, occupation,
       schedules: blocks.map(b => ({
         day: b.day, startSlot: b.startSlot, endSlot: b.endSlot,
         activity: b.name, emoji: b.emoji, color: b.color,
@@ -457,6 +493,18 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
   // ═══════════════════════════════════════════════════════════════════════════
   return (
     <SafeAreaView style={styles.container}>
+      {/* AI 로딩 오버레이 */}
+      <Modal visible={aiLoading} transparent animationType="fade">
+        <View style={styles.aiOverlay}>
+          <View style={styles.aiCard}>
+            <Text style={styles.aiCardEmoji}>✨</Text>
+            <Text style={styles.aiCardTitle}>AI가 시간표를 만들고 있어요</Text>
+            <Text style={styles.aiCardSub}>{userName}의 정보를 분석 중이에요…</Text>
+            <ActivityIndicator color={colors.primary} size="large" style={{ marginTop: 16 }} />
+          </View>
+        </View>
+      </Modal>
+
       <View
         ref={rootRef}
         style={{ flex: 1 }}
@@ -491,6 +539,16 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
             </TouchableOpacity>
           ))}
         </View>
+
+        {/* AI 추천 배너 */}
+        <TouchableOpacity style={styles.aiBanner} onPress={handleAiSuggest} activeOpacity={0.8}>
+          <Text style={styles.aiBannerEmoji}>✨</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.aiBannerTitle}>AI 맞춤 시간표 제공받기</Text>
+            <Text style={styles.aiBannerSub}>인적사항 기반으로 최적의 시간표를 제안해드려요</Text>
+          </View>
+          <Text style={styles.aiBannerArrow}>→</Text>
+        </TouchableOpacity>
 
         {/* 시간표 */}
         <ScrollView
@@ -684,6 +742,28 @@ const styles = StyleSheet.create({
     elevation: 4, shadowColor: colors.primary, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 3 },
   },
   nextText: { color: '#fff', fontWeight: '800', fontSize: 15 },
+
+  // ─ AI 오버레이 ─
+  aiOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 32 },
+  aiCard: {
+    backgroundColor: '#fff', borderRadius: 24, padding: 28, alignItems: 'center', width: '100%',
+    elevation: 10, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 20, shadowOffset: { width: 0, height: 6 },
+  },
+  aiCardEmoji: { fontSize: 40, marginBottom: 12 },
+  aiCardTitle: { fontSize: 17, fontWeight: '900', color: colors.primary, marginBottom: 6 },
+  aiCardSub:   { fontSize: 13, color: '#888', textAlign: 'center' },
+
+  // ─ AI 배너 ─
+  aiBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    marginHorizontal: 12, marginTop: 8, marginBottom: 2,
+    backgroundColor: '#F0FBF4', borderRadius: 16, padding: 12,
+    borderWidth: 1.5, borderColor: colors.primary + '55',
+  },
+  aiBannerEmoji: { fontSize: 20 },
+  aiBannerTitle: { fontSize: 13, fontWeight: '800', color: colors.primary },
+  aiBannerSub:   { fontSize: 10, color: '#888', marginTop: 2 },
+  aiBannerArrow: { fontSize: 15, color: colors.primary, fontWeight: '800' },
 
   // ─ Phase 2 헤더/탭 ─
   previewHeader: {

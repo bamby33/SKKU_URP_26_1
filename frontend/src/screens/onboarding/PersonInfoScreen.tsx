@@ -31,6 +31,7 @@ export default function PersonInfoScreen({ navigation }: Props) {
   const [age,            setAge]            = useState('');
   const [gender,         setGender]         = useState<string | null>(null);
   const [disabilityType, setDisabilityType] = useState<string | null>(null);
+  const [occupation,     setOccupation]     = useState('');
 
   const canNext = name.trim().length > 0 && age.trim().length > 0 && gender !== null && disabilityType !== null;
 
@@ -40,6 +41,7 @@ export default function PersonInfoScreen({ navigation }: Props) {
       age: age.trim(),
       gender: gender!,
       disabilityType: disabilityType!,
+      occupation: occupation.trim(),
     });
   };
 
@@ -121,6 +123,19 @@ export default function PersonInfoScreen({ navigation }: Props) {
                 </TouchableOpacity>
               ))}
             </View>
+          </View>
+
+          {/* 하는 일 */}
+          <View style={styles.fieldGroup}>
+            <Text style={styles.fieldLabel}>하는 일 <Text style={{ fontWeight: '400', color: '#aaa' }}>(선택)</Text></Text>
+            <TextInput
+              style={styles.input}
+              placeholder="예) 복지관 다니기, 직업 훈련, 학교 등"
+              placeholderTextColor="#bbb"
+              value={occupation}
+              onChangeText={setOccupation}
+              returnKeyType="next"
+            />
           </View>
 
           {/* 장애 유형 */}

@@ -22,7 +22,7 @@ type Props = {
 export default function WelcomeScreen({ navigation, route }: Props) {
   const {
     userName, guardianName, guardianPhone,
-    username, password, pins, schedules, themeColor, disabilityType,
+    username, password, pins, schedules, themeColor, disabilityType, occupation,
   } = route.params;
 
   const slotToTime = (slot: number) => {
@@ -75,6 +75,7 @@ export default function WelcomeScreen({ navigation, route }: Props) {
         name: userName,
         disability_type: disabilityType,
         disability_level: 'mild',
+        special_notes: occupation || null,
         theme_color: themeColor ?? '#3B4A6B',
         guardian: {
           name: guardianName,

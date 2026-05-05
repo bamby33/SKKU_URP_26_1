@@ -14,6 +14,8 @@ import FeedbackScreen from '../screens/user/FeedbackScreen';
 import EmergencyScreen from '../screens/user/EmergencyScreen';
 import GuardianReportScreen from '../screens/guardian/GuardianReportScreen';
 import AIChatScreen from '../screens/user/AIChatScreen';
+import TodayScheduleEditScreen from '../screens/user/TodayScheduleEditScreen';
+import WeekScheduleEditScreen from '../screens/user/WeekScheduleEditScreen';
 
 export type PINItem = {
   order: number;
@@ -37,6 +39,7 @@ type SignupBase = {
   age: string;
   gender: string;
   disabilityType: string;
+  occupation: string;
   likes: string[];
   dislikes: string[];
   themeColor: string;
@@ -56,7 +59,7 @@ export type RootStackParamList = {
   PINLogin: undefined;
   Home: undefined;
   PersonInfo: undefined;
-  Preferences: { userName: string; age: string; gender: string; disabilityType: string };
+  Preferences: { userName: string; age: string; gender: string; disabilityType: string; occupation: string };
   ScheduleSetup: SignupBase;
   AccountSetup: SignupBase;
   PINSetup: AccountInfo;
@@ -66,6 +69,8 @@ export type RootStackParamList = {
   Emergency: { stage?: 'stage_1' | 'stage_2' | 'stage_3' };
   GuardianReport: undefined;
   AIChat: undefined;
+  TodayScheduleEdit: undefined;
+  WeekScheduleEdit: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -91,6 +96,8 @@ export default function AppNavigator() {
         component={AIChatScreen}
         options={{ animation: 'fade' }}
       />
+      <Stack.Screen name="TodayScheduleEdit" component={TodayScheduleEditScreen} />
+      <Stack.Screen name="WeekScheduleEdit" component={WeekScheduleEditScreen} />
     </Stack.Navigator>
   );
 }

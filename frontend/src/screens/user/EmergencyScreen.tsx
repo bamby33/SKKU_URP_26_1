@@ -4,13 +4,15 @@
  */
 import React, { useState } from 'react';
 import {
-  View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert,
+  View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
+import { api } from '../../api/client';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Emergency'>;
@@ -66,11 +68,27 @@ export default function EmergencyScreen({ navigation, route }: Props) {
   const stage = route.params?.stage ?? 'stage_2';
   const config = STAGE_CONFIG[stage];
   const [listening, setListening] = useState(true);
+  const [sending, setSending] = useState(false);
 
   const handleCallGuardian = () => {
     Alert.alert('보호자 알림', '보호자에게 긴급 알림을 보냅니다.', [
       { text: '취소', style: 'cancel' },
-      { text: '보내기', style: 'destructive' },
+      {
+        text: '보내기', style: 'destructive',
+        onPress: async () => {
+          setSending(true);
+          try {
+            const userId = await AsyncStorage.getItem('user_id');
+            if (!userId) throw new Error('user_id 없음');
+            await api.post(`/guardian/user/${userId}/emergency`);
+            Alert.alert('전송 완료', '보호자에게 긴급 알림을 보냈어요.');
+          } catch {
+            Alert.alert('오류', '알림 전송에 실패했어요. 다시 시도해주세요.');
+          } finally {
+            setSending(false);
+          }
+        },
+      },
     ]);
   };
 
@@ -140,8 +158,11 @@ export default function EmergencyScreen({ navigation, route }: Props) {
         </View>
 
         {/* 보호자 알림 */}
-        <TouchableOpacity style={styles.contactBtn} onPress={handleCallGuardian}>
-          <Text style={styles.contactText}>📞 보호자에게 알리기</Text>
+        <TouchableOpacity style={styles.contactBtn} onPress={handleCallGuardian} disabled={sending}>
+          {sending
+            ? <ActivityIndicator color={colors.white} />
+            : <Text style={styles.contactText}>📞 보호자에게 알리기</Text>
+          }
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
