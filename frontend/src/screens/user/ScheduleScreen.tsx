@@ -109,7 +109,14 @@ export default function ScheduleScreen({ navigation }: Props) {
     if (!pending) return;
     const s = pending; setPending(null);
     if (snoozeRef.current) clearTimeout(snoozeRef.current);
-    Speech.speak(`${getEmoji(s.title)} 잘했어요! 파이팅!`, { language: 'ko-KR' });
+    navigation.navigate('Feedback', { scheduleId: s.id, achieved: true, title: s.title });
+  };
+
+  const handleMissed = () => {
+    if (!pending) return;
+    const s = pending; setPending(null);
+    if (snoozeRef.current) clearTimeout(snoozeRef.current);
+    navigation.navigate('Feedback', { scheduleId: s.id, achieved: false, title: s.title });
   };
   const handleSnooze = () => {
     const s = pending; setPending(null);
@@ -191,10 +198,10 @@ export default function ScheduleScreen({ navigation }: Props) {
           navigation.navigate('Emergency', { stage: 'stage_2' });
           const uid = userIdRef.current;
           if (uid) {
-            api.post('/chat/', {
-              user_id: uid,
-              message: '(스케줄 알림 중 반응 감지)',
-              context: { decibel: approxDB },
+            api.post(`/chat/log-behavior/${uid}`, {
+              stage: 'stage_2',
+              trigger: 'voice_decibel',
+              decibel: approxDB,
             }).catch(() => {});
           }
         } else if (approxDB >= DB_STAGE1) {
@@ -224,6 +231,11 @@ export default function ScheduleScreen({ navigation }: Props) {
       recordingRef.current = null;
     }
   };
+
+  // 컴포넌트 언마운트 시 recording 정리
+  useEffect(() => {
+    return () => { stopMetering(); };
+  }, []);
 
   // pending 모달 열릴 때 메터링 시작 / 닫힐 때 중지
   useEffect(() => {
@@ -488,12 +500,15 @@ export default function ScheduleScreen({ navigation }: Props) {
             )}
             <View style={styles.notifyRow}>
               <TouchableOpacity style={[styles.notifyOk, { backgroundColor: theme }]} onPress={handleConfirm}>
-                <Text style={styles.notifyOkText}>✅  알겠어요!</Text>
+                <Text style={styles.notifyOkText}>✅  했어요!</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.notifyLater} onPress={handleSnooze}>
                 <Text style={styles.notifyLaterText}>⏱  이따 할게요</Text>
               </TouchableOpacity>
             </View>
+            <TouchableOpacity style={styles.notifyMissed} onPress={handleMissed}>
+              <Text style={styles.notifyMissedText}>❌  못 했어요</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -746,6 +761,8 @@ const styles = StyleSheet.create({
   notifyOkText:    { color: '#fff', fontWeight: '900', fontSize: 16 },
   notifyLater:     { flex: 1, backgroundColor: '#F1F5F9', borderRadius: 18, paddingVertical: 16, alignItems: 'center' },
   notifyLaterText: { color: '#475569', fontWeight: '800', fontSize: 16 },
+  notifyMissed:    { width: '100%', backgroundColor: '#FEF2F2', borderRadius: 18, paddingVertical: 14, alignItems: 'center', marginTop: 8 },
+  notifyMissedText: { color: '#DC2626', fontWeight: '700', fontSize: 15 },
 
   // dB 미터
   dbMeter: {

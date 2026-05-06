@@ -2,7 +2,8 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from models.database import get_db, ChatMessage, User
+from typing import Optional
+from models.database import get_db, ChatMessage, User, BehaviorLog, FeedbackStage
 from agents.care_agent import chat as agent_chat
 from datetime import datetime
 import json
@@ -11,6 +12,11 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
+
+class BehaviorLogRequest(BaseModel):
+    stage: str                    # "stage_1" | "stage_2" | "stage_3"
+    trigger: Optional[str] = None # "voice_decibel" | "text_refusal" | "manual" 등
+    decibel: Optional[float] = None
 
 class ChatRequest(BaseModel):
     user_id: int
@@ -78,6 +84,45 @@ def send_message(data: ChatRequest, db: Session = Depends(get_db)):
     db.commit()
 
     return result
+
+
+@router.post("/log-behavior/{user_id}")
+def log_behavior(user_id: int, data: BehaviorLogRequest, db: Session = Depends(get_db)):
+    """행동 로그 직접 저장 — AI tool 우회, 신뢰성 보장"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+
+    stage_map = {
+        "stage_1": FeedbackStage.STAGE_1,
+        "stage_2": FeedbackStage.STAGE_2,
+        "stage_3": FeedbackStage.STAGE_3,
+    }
+    stage_enum = stage_map.get(data.stage)
+    if not stage_enum:
+        raise HTTPException(status_code=400, detail="stage는 stage_1~3 중 하나여야 합니다.")
+
+    log = BehaviorLog(
+        user_id=user_id,
+        stage=stage_enum,
+        trigger=data.trigger or "direct",
+        decibel_level=data.decibel,
+        logged_at=datetime.utcnow(),
+    )
+    db.add(log)
+    db.commit()
+    db.refresh(log)
+
+    # stage_2: 보호자에게 자동 긴급 알림
+    if data.stage == "stage_2":
+        from agents.tools.messaging import send_message
+        send_message(
+            user_id=user_id,
+            message_type="emergency",
+            extra_info=f"음성 데시벨 감지{f': {data.decibel:.0f}dB' if data.decibel else ''}",
+        )
+
+    return {"success": True, "log_id": log.id, "stage": data.stage}
 
 
 @router.post("/schedule-followup/{user_id}")

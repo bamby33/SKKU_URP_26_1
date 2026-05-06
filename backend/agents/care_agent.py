@@ -138,8 +138,8 @@ def _build_system_prompt(user_profile: dict | None) -> str:
         return BASE_SYSTEM_PROMPT
 
     name    = user_profile.get("name", "사용자")
-    d_type  = user_profile.get("disability_type", "INTELLECTUAL")
-    d_level = user_profile.get("disability_level", "MILD")
+    d_type  = (user_profile.get("disability_type") or "intellectual").upper()
+    d_level = (user_profile.get("disability_level") or "mild").upper()
     notes   = user_profile.get("special_notes", "")
     f_mode  = user_profile.get("feedback_mode", "voice")
 

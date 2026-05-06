@@ -23,13 +23,15 @@ const LIKE_SUGGESTIONS = ['음악 듣기', '산책', '그림 그리기', '블록
 const DISLIKE_SUGGESTIONS = ['큰 소리', '갑작스러운 변화', '낯선 장소', '긴 대기', '붐비는 곳'];
 
 export default function PreferencesScreen({ navigation, route }: Props) {
-  const { userName, age, gender, disabilityType, occupation } = route.params;
+  const { userName, age, gender, disabilityType, disabilityLevel, occupation } = route.params;
 
   const [likes, setLikes] = useState<string[]>([]);
   const [dislikes, setDislikes] = useState<string[]>([]);
   const [likeInput, setLikeInput] = useState('');
   const [dislikeInput, setDislikeInput] = useState('');
-  const [themeColor, setThemeColor] = useState(DEFAULT_THEME_COLOR.color);
+  const [problemNotes, setProblemNotes] = useState('');
+  const [dailyLife, setDailyLife] = useState('');
+  const themeColor = DEFAULT_THEME_COLOR.color;
 
   const addTag = (
     input: string,
@@ -61,7 +63,10 @@ export default function PreferencesScreen({ navigation, route }: Props) {
   };
 
   const handleNext = () => {
-    navigation.navigate('ScheduleSetup', { userName, age, gender, disabilityType, occupation, likes, dislikes, themeColor, schedules: [] });
+    navigation.navigate('BasicSchedule', {
+      userName, age, gender, disabilityType, disabilityLevel, occupation,
+      likes, dislikes, problemNotes, dailyLife, themeColor,
+    });
   };
 
   return (
@@ -90,29 +95,6 @@ export default function PreferencesScreen({ navigation, route }: Props) {
             <Text style={styles.emoji}>💝</Text>
             <Text style={styles.title}>{userName}의{'\n'}특성을 알려주세요</Text>
             <Text style={styles.subtitle}>AI가 더 잘 도와줄 수 있어요</Text>
-          </View>
-
-          {/* 좋아하는 색 */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionEmoji}>🎨</Text>
-              <Text style={styles.sectionTitle}>좋아하는 색</Text>
-            </View>
-            <View style={styles.colorRow}>
-              {THEME_PALETTE.map((p) => (
-                <TouchableOpacity
-                  key={p.key}
-                  style={[styles.colorSwatch, { backgroundColor: p.color }, themeColor === p.color && styles.colorSwatchSelected]}
-                  onPress={() => setThemeColor(p.color)}
-                  activeOpacity={0.8}
-                >
-                  {themeColor === p.color && <Text style={styles.colorCheck}>✓</Text>}
-                </TouchableOpacity>
-              ))}
-            </View>
-            <Text style={styles.colorLabel}>
-              {THEME_PALETTE.find(p => p.color === themeColor)?.label ?? ''}
-            </Text>
           </View>
 
           {/* 좋아하는 것 */}
@@ -224,6 +206,50 @@ export default function PreferencesScreen({ navigation, route }: Props) {
                 ))}
               </View>
             )}
+          </View>
+
+          {/* 취미 및 일상 */}
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionEmoji}>🌿</Text>
+              <Text style={styles.sectionTitle}>취미 및 일상</Text>
+            </View>
+            <Text style={styles.notesHint}>
+              평소 즐기는 활동, 루틴, 생활 패턴을 자유롭게 적어주세요{'\n'}
+              AI가 맞춤 시간표를 만들 때 활용해요
+            </Text>
+            <TextInput
+              style={styles.notesInput}
+              placeholder={'예) 매일 저녁 산책을 즐겨요. 주말엔 그림 그리기를 좋아해요.\n좋아하는 캐릭터는 뽀로로이고 낮잠을 자주 자요.'}
+              placeholderTextColor="#bbb"
+              value={dailyLife}
+              onChangeText={setDailyLife}
+              multiline
+              numberOfLines={4}
+              textAlignVertical="top"
+            />
+          </View>
+
+          {/* 문제행동 특이사항 */}
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionEmoji}>📝</Text>
+              <Text style={styles.sectionTitle}>문제행동 특이사항</Text>
+            </View>
+            <Text style={styles.notesHint}>
+              평소 문제행동, 빈도, 진정 방법 등 자유롭게 적어주세요{'\n'}
+              AI가 이 정보를 기억하고 맞춤 대응해요
+            </Text>
+            <TextInput
+              style={styles.notesInput}
+              placeholder={'예) 큰 소리에 민감, 일과 변화 시 거부 반응 주 2~3회\n음악 들으면 진정됨'}
+              placeholderTextColor="#bbb"
+              value={problemNotes}
+              onChangeText={setProblemNotes}
+              multiline
+              numberOfLines={4}
+              textAlignVertical="top"
+            />
           </View>
 
           {/* 다음 버튼 */}
@@ -358,6 +384,18 @@ const styles = StyleSheet.create({
   tagChipAlert: { backgroundColor: colors.alertLight },
   tagChipText: { color: colors.white, fontSize: 12, fontWeight: '600' },
   tagChipTextAlert: { color: colors.white },
+
+  notesHint: { fontSize: 12, color: '#888', lineHeight: 18 },
+  notesInput: {
+    backgroundColor: '#F4FAF7',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    padding: 14,
+    fontSize: 14,
+    color: colors.text,
+    minHeight: 100,
+  },
 
   nextBtn: {
     backgroundColor: colors.primary,

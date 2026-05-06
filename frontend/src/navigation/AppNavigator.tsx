@@ -5,6 +5,7 @@ import LoginScreen from '../screens/auth/LoginScreen';
 import PersonInfoScreen from '../screens/onboarding/PersonInfoScreen';
 import PreferencesScreen from '../screens/onboarding/PreferencesScreen';
 import ScheduleSetupScreen from '../screens/onboarding/ScheduleSetupScreen';
+import BasicScheduleScreen from '../screens/onboarding/BasicScheduleScreen';
 import AccountSetupScreen from '../screens/onboarding/AccountSetupScreen';
 import PINSetupScreen from '../screens/onboarding/PINSetupScreen';
 import WelcomeScreen from '../screens/onboarding/WelcomeScreen';
@@ -39,9 +40,12 @@ type SignupBase = {
   age: string;
   gender: string;
   disabilityType: string;
+  disabilityLevel: string;   // 'mild' | 'moderate' | 'severe'
   occupation: string;
   likes: string[];
   dislikes: string[];
+  problemNotes: string;       // 문제행동 특이사항
+  dailyLife: string;          // 취미 및 일상 자유 입력
   themeColor: string;
   schedules: ScheduleParam[];
 };
@@ -59,13 +63,14 @@ export type RootStackParamList = {
   PINLogin: undefined;
   Home: undefined;
   PersonInfo: undefined;
-  Preferences: { userName: string; age: string; gender: string; disabilityType: string; occupation: string };
+  Preferences: { userName: string; age: string; gender: string; disabilityType: string; disabilityLevel: string; occupation: string };
+  BasicSchedule: Omit<SignupBase, 'schedules'>;
   ScheduleSetup: SignupBase;
   AccountSetup: SignupBase;
   PINSetup: AccountInfo;
   Welcome: AccountInfo & { pins: PINItem[] };
   Schedule: undefined;
-  Feedback: { scheduleId: number; achieved: boolean };
+  Feedback: { scheduleId: number; achieved: boolean; title: string };
   Emergency: { stage?: 'stage_1' | 'stage_2' | 'stage_3' };
   GuardianReport: undefined;
   AIChat: undefined;
@@ -82,6 +87,7 @@ export default function AppNavigator() {
       <Stack.Screen name="Login" component={LoginScreen} />
       <Stack.Screen name="PersonInfo" component={PersonInfoScreen} />
       <Stack.Screen name="Preferences" component={PreferencesScreen} />
+      <Stack.Screen name="BasicSchedule" component={BasicScheduleScreen} />
       <Stack.Screen name="ScheduleSetup" component={ScheduleSetupScreen} />
       <Stack.Screen name="AccountSetup" component={AccountSetupScreen} />
       <Stack.Screen name="PINSetup" component={PINSetupScreen} />

@@ -15,7 +15,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
-import { sendChat } from '../../api/client';
+import { sendChat, api } from '../../api/client';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'AIChat'>;
@@ -191,8 +191,13 @@ export default function AIChatScreen({ navigation }: Props) {
         setMessages(prev => [...prev, newMsg]);
         Speech.speak(reply, { language: 'ko-KR' });
       }
-      if (stage === 'stage_2') navigation.navigate('Emergency', { stage: 'stage_2' });
-      else if (stage === 'stage_3') navigation.navigate('Emergency', { stage: 'stage_3' });
+      if (stage === 'stage_2') {
+        api.post(`/chat/log-behavior/${userId}`, { stage: 'stage_2', trigger: 'text_agitation' }).catch(() => {});
+        navigation.navigate('Emergency', { stage: 'stage_2' });
+      } else if (stage === 'stage_3') {
+        api.post(`/chat/log-behavior/${userId}`, { stage: 'stage_3', trigger: 'text_calm' }).catch(() => {});
+        navigation.navigate('Emergency', { stage: 'stage_3' });
+      }
     } catch {
       const err = '죄송해요, 잠시 후 다시 시도해 주세요 😢';
       setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: err }]);

@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from google import genai
+from groq import Groq
 from dotenv import load_dotenv
 from models.database import get_db, User, Schedule
 
@@ -97,15 +97,16 @@ def suggest_schedule(user_id: int, db: Session = Depends(get_db)):
 - color: 반드시 이 중 하나 선택 "#FFB74D" "#4CAF7D" "#AB77E8" "#6B9BF2" "#5BB7C0" "#E57373" "#26C6DA" "#AED581" "#FF8A65"
 """
 
-    api_key = os.getenv("GOOGLE_API_KEY")
-    model_name = os.getenv("GEMMA_MODEL", "gemini-2.5-flash")
-
     try:
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(model=model_name, contents=prompt)
-        raw = response.text
+        groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        response = groq_client.chat.completions.create(
+            model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=4096,
+        )
+        raw = response.choices[0].message.content or ""
     except Exception as e:
-        logger.error(f"Gemini API error: {e}")
+        logger.error(f"Groq API error: {e}")
         raise HTTPException(status_code=503, detail=f"AI 서비스 오류: {str(e)}")
 
     try:
@@ -157,6 +158,13 @@ class OnboardingRequest(BaseModel):
     occupation: str = ""
     likes: list[str] = []
     dislikes: list[str] = []
+    daily_life: str = ""
+    wake_time: str = ""
+    sleep_time: str = ""
+    breakfast_time: str = ""
+    lunch_time: str = ""
+    dinner_time: str = ""
+    medication_times: list[str] = []
 
 
 @router.post("/suggest-schedule-onboarding")
@@ -171,6 +179,22 @@ def suggest_schedule_onboarding(data: OnboardingRequest):
     dislikes_str = ", ".join(data.dislikes) if data.dislikes else "없음"
     occupation_str = data.occupation if data.occupation else "없음"
     age_str = f"{data.age}세" if data.age else "나이 미입력"
+    daily_life_str = data.daily_life if data.daily_life else "없음"
+
+    schedule_lines = []
+    if data.wake_time:
+        schedule_lines.append(f"  - 기상 시간: {data.wake_time}")
+    if data.breakfast_time:
+        schedule_lines.append(f"  - 아침 식사: {data.breakfast_time}")
+    if data.lunch_time:
+        schedule_lines.append(f"  - 점심 식사: {data.lunch_time}")
+    if data.dinner_time:
+        schedule_lines.append(f"  - 저녁 식사: {data.dinner_time}")
+    if data.medication_times:
+        schedule_lines.append(f"  - 약 복용: {', '.join(data.medication_times)}")
+    if data.sleep_time:
+        schedule_lines.append(f"  - 취침 시간: {data.sleep_time} (취침 준비는 이 시간 1시간 전부터 시작, 이 시간이 취침 블록의 종료 시간)")
+    schedule_str = "\n".join(schedule_lines) if schedule_lines else "  - 별도 지정 없음"
 
     prompt = f"""다음 발달장애인을 위한 일주일 생활 시간표를 추천해주세요.
 
@@ -182,12 +206,18 @@ def suggest_schedule_onboarding(data: OnboardingRequest):
 - 하는 일: {occupation_str}
 - 좋아하는 것: {likes_str}
 - 싫어하는 것 / 힘든 것: {dislikes_str}
+- 취미 및 일상: {daily_life_str}
+
+기본 시간 정보 (반드시 이 시간을 기준으로 시간표를 구성하세요):
+{schedule_str}
 
 요구사항:
 - 발달장애인에게 적합한 규칙적이고 예측 가능한 시간표
 - 반복되는 일상 루틴 강조 (기상, 식사, 취침 등)
+- 위의 기본 시간 정보를 정확하게 반영하세요 (기상·취침·식사 시간 준수)
+- 약 복용 시간이 있다면 반드시 포함하세요
 - 하는 일(직장/시설/학교 등)이 있다면 주중 스케줄에 반영
-- 좋아하는 활동을 여가 시간에 반영
+- 좋아하는 활동과 취미를 여가 시간에 반영
 - 싫어하는 것은 피하거나 최소화
 - 주중(월~금)과 주말(토~일) 패턴 구분
 - 하루 8~10개 항목
@@ -205,15 +235,16 @@ def suggest_schedule_onboarding(data: OnboardingRequest):
 - color: 반드시 이 중 하나 선택 "#FFB74D" "#4CAF7D" "#AB77E8" "#6B9BF2" "#5BB7C0" "#E57373" "#26C6DA" "#AED581" "#FF8A65"
 """
 
-    api_key = os.getenv("GOOGLE_API_KEY")
-    model_name = os.getenv("GEMMA_MODEL", "gemini-2.5-flash")
-
     try:
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(model=model_name, contents=prompt)
-        raw = response.text
+        groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        response = groq_client.chat.completions.create(
+            model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=4096,
+        )
+        raw = response.choices[0].message.content or ""
     except Exception as e:
-        logger.error(f"Gemini API error (onboarding): {e}")
+        logger.error(f"Groq API error (onboarding): {e}")
         raise HTTPException(status_code=503, detail=f"AI 서비스 오류: {str(e)}")
 
     try:

@@ -2,7 +2,7 @@
  * 화면 5 · 사용자
  * 문제행동 대응 (긴급) — stage 2: 흥분 상태
  */
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, ActivityIndicator,
 } from 'react-native';
@@ -10,6 +10,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Speech from 'expo-speech';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
 import { api } from '../../api/client';
@@ -20,10 +21,10 @@ type Props = {
 };
 
 const OPTIONS = [
-  { emoji: '🎵', label: '좋아하는\n음악 듣기', bg: '#e8f5e9' },
-  { emoji: '🧸', label: '특아 한 것\n꼭 안기', bg: '#e3f2fd' },
-  { emoji: '🚶', label: '잠깐\n자리 이동', bg: colors.alertBg },
-  { emoji: '🧊', label: '물 한 잔\n마시기', bg: '#fff8e1' },
+  { emoji: '🎵', label: '좋아하는\n음악 듣기', bg: '#e8f5e9', speech: '좋아하는 음악을 틀어봐요. 음악이 도움이 될 거예요.' },
+  { emoji: '🧸', label: '좋아하는 것\n꼭 안기',  bg: '#e3f2fd', speech: '좋아하는 물건을 꼭 안아봐요. 안아주면 마음이 편해질 거예요.' },
+  { emoji: '🚶', label: '잠깐\n자리 이동',    bg: colors.alertBg, speech: '잠깐 다른 곳으로 이동해봐요. 조금 걸으면 도움이 될 거예요.' },
+  { emoji: '🧊', label: '물 한 잔\n마시기',   bg: '#fff8e1', speech: '물 한 잔 마셔봐요. 천천히 마시면 마음이 차분해질 거예요.' },
 ];
 
 const STAGES = ['지나감', '지금', '이후'];
@@ -71,6 +72,19 @@ export default function EmergencyScreen({ navigation, route }: Props) {
   const [sending, setSending] = useState(false);
   const [calming, setCalming] = useState(false);
 
+  // stage 진입 시 TTS 자동 재생 (낮고 느린 속도)
+  useEffect(() => {
+    const messages: Record<string, string> = {
+      stage_2: '괜찮아요. 천천히 숨을 쉬어봐요. 코로 깊게 들이쉬고, 입으로 천천히 내쉬어요.',
+      stage_3: '많이 진정됐어요. 잘 했어요. 몸에 다친 곳은 없나요?',
+    };
+    const msg = messages[stage];
+    if (msg) {
+      Speech.speak(msg, { language: 'ko-KR', rate: 0.82, pitch: 0.95 });
+    }
+    return () => { Speech.stop(); };
+  }, [stage]);
+
   const handleCalmDown = async () => {
     setCalming(true);
     try {
@@ -79,11 +93,10 @@ export default function EmergencyScreen({ navigation, route }: Props) {
         const uid = Number(userId);
         // 60분 후 followup 예약
         api.post(`/chat/schedule-followup/${uid}`).catch(() => {});
-        // 백그라운드에서 stage_3 로그 기록
-        api.post('/chat/', {
-          user_id: uid,
-          message: '(진정됨 — stage_3 전환)',
-          context: {},
+        // stage_3 로그 직접 저장
+        api.post(`/chat/log-behavior/${uid}`, {
+          stage: 'stage_3',
+          trigger: 'manual_calm_down',
         }).catch(() => {});
       }
     } finally {
@@ -152,11 +165,16 @@ export default function EmergencyScreen({ navigation, route }: Props) {
           <Text style={styles.calmSub}>{config.calmSub}</Text>
         </View>
 
-        {/* 활동 선택 */}
+        {/* 활동 선택 — 탭하면 TTS 안내 */}
         <Text style={styles.optionsLabel}>도움이 될 것 해볼까요? 😊</Text>
         <View style={styles.optionsGrid}>
           {OPTIONS.map((opt, i) => (
-            <TouchableOpacity key={i} style={[styles.optCard, { backgroundColor: opt.bg }]}>
+            <TouchableOpacity
+              key={i}
+              style={[styles.optCard, { backgroundColor: opt.bg }]}
+              onPress={() => Speech.speak(opt.speech, { language: 'ko-KR', rate: 0.85 })}
+              activeOpacity={0.75}
+            >
               <Text style={styles.optEmoji}>{opt.emoji}</Text>
               <Text style={styles.optText}>{opt.label}</Text>
             </TouchableOpacity>

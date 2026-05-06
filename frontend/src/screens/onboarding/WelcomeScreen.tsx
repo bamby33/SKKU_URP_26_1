@@ -22,7 +22,8 @@ type Props = {
 export default function WelcomeScreen({ navigation, route }: Props) {
   const {
     userName, guardianName, guardianPhone,
-    username, password, pins, schedules, themeColor, disabilityType, occupation,
+    username, password, pins, schedules, themeColor,
+    disabilityType, disabilityLevel, occupation, likes, dislikes, problemNotes,
   } = route.params;
 
   const slotToTime = (slot: number) => {
@@ -71,11 +72,19 @@ export default function WelcomeScreen({ navigation, route }: Props) {
     setRegistering(true);
     try {
       // 1. 사용자 + 보호자 회원가입
+      // special_notes에 모든 개인화 정보를 구조화해서 저장
+      const notesParts: string[] = [];
+      if (occupation) notesParts.push(`직업/활동: ${occupation}`);
+      if (likes?.length) notesParts.push(`좋아하는 것: ${likes.join(', ')}`);
+      if (dislikes?.length) notesParts.push(`싫어하는 것: ${dislikes.join(', ')}`);
+      if (problemNotes?.trim()) notesParts.push(`문제행동 특이사항: ${problemNotes.trim()}`);
+      const specialNotes = notesParts.length > 0 ? notesParts.join('\n') : null;
+
       const res = await api.post('/users/', {
         name: userName,
         disability_type: disabilityType,
-        disability_level: 'mild',
-        special_notes: occupation || null,
+        disability_level: disabilityLevel ?? 'mild',
+        special_notes: specialNotes,
         theme_color: themeColor ?? '#3B4A6B',
         guardian: {
           name: guardianName,

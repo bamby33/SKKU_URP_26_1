@@ -26,14 +26,21 @@ const DISABILITY_TYPES = [
   { key: 'autism',       label: '자폐 장애' },
 ];
 
-export default function PersonInfoScreen({ navigation }: Props) {
-  const [name,           setName]           = useState('');
-  const [age,            setAge]            = useState('');
-  const [gender,         setGender]         = useState<string | null>(null);
-  const [disabilityType, setDisabilityType] = useState<string | null>(null);
-  const [occupation,     setOccupation]     = useState('');
+const DISABILITY_LEVELS = [
+  { key: 'mild',     emoji: '🙂', label: '혼자 할 수 있어요',       sub: '대부분 일과를 스스로 수행' },
+  { key: 'moderate', emoji: '🤝', label: '도움이 조금 필요해요',     sub: '일부 상황에서 지원 필요' },
+  { key: 'severe',   emoji: '💙', label: '도움이 많이 필요해요',     sub: '대부분 상황에서 지원 필요' },
+];
 
-  const canNext = name.trim().length > 0 && age.trim().length > 0 && gender !== null && disabilityType !== null;
+export default function PersonInfoScreen({ navigation }: Props) {
+  const [name,            setName]            = useState('');
+  const [age,             setAge]             = useState('');
+  const [gender,          setGender]          = useState<string | null>(null);
+  const [disabilityType,  setDisabilityType]  = useState<string | null>(null);
+  const [disabilityLevel, setDisabilityLevel] = useState<string | null>(null);
+
+  const canNext = name.trim().length > 0 && age.trim().length > 0
+    && gender !== null && disabilityType !== null && disabilityLevel !== null;
 
   const handleNext = () => {
     navigation.navigate('Preferences', {
@@ -41,7 +48,8 @@ export default function PersonInfoScreen({ navigation }: Props) {
       age: age.trim(),
       gender: gender!,
       disabilityType: disabilityType!,
-      occupation: occupation.trim(),
+      disabilityLevel: disabilityLevel!,
+      occupation: '',
     });
   };
 
@@ -125,19 +133,6 @@ export default function PersonInfoScreen({ navigation }: Props) {
             </View>
           </View>
 
-          {/* 하는 일 */}
-          <View style={styles.fieldGroup}>
-            <Text style={styles.fieldLabel}>하는 일 <Text style={{ fontWeight: '400', color: '#aaa' }}>(선택)</Text></Text>
-            <TextInput
-              style={styles.input}
-              placeholder="예) 복지관 다니기, 직업 훈련, 학교 등"
-              placeholderTextColor="#bbb"
-              value={occupation}
-              onChangeText={setOccupation}
-              returnKeyType="next"
-            />
-          </View>
-
           {/* 장애 유형 */}
           <View style={styles.fieldGroup}>
             <Text style={styles.fieldLabel}>장애 유형</Text>
@@ -152,6 +147,32 @@ export default function PersonInfoScreen({ navigation }: Props) {
                   <Text style={[styles.disabilityLabel, disabilityType === d.key && styles.disabilityLabelSelected]}>
                     {d.label}
                   </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          {/* 독립 수행 능력 */}
+          <View style={styles.fieldGroup}>
+            <Text style={styles.fieldLabel}>독립 수행 능력</Text>
+            <View style={styles.levelCol}>
+              {DISABILITY_LEVELS.map((l) => (
+                <TouchableOpacity
+                  key={l.key}
+                  style={[styles.levelBtn, disabilityLevel === l.key && styles.levelBtnSelected]}
+                  onPress={() => setDisabilityLevel(l.key)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.levelEmoji}>{l.emoji}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.levelLabel, disabilityLevel === l.key && styles.levelLabelSelected]}>
+                      {l.label}
+                    </Text>
+                    <Text style={[styles.levelSub, disabilityLevel === l.key && styles.levelSubSelected]}>
+                      {l.sub}
+                    </Text>
+                  </View>
+                  {disabilityLevel === l.key && <Text style={styles.levelCheck}>✓</Text>}
                 </TouchableOpacity>
               ))}
             </View>
@@ -257,6 +278,20 @@ const styles = StyleSheet.create({
   disabilityLabelSelected: { color: colors.white },
   disabilityDesc: { fontSize: 11, color: '#999', textAlign: 'center', lineHeight: 15 },
   disabilityDescSelected: { color: 'rgba(255,255,255,0.8)' },
+
+  levelCol: { gap: 8 },
+  levelBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: colors.white, borderRadius: 14,
+    padding: 14, borderWidth: 2, borderColor: colors.border,
+  },
+  levelBtnSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
+  levelEmoji: { fontSize: 24 },
+  levelLabel: { fontSize: 14, fontWeight: '800', color: colors.primary },
+  levelLabelSelected: { color: colors.white },
+  levelSub: { fontSize: 11, color: '#999', marginTop: 2 },
+  levelSubSelected: { color: 'rgba(255,255,255,0.8)' },
+  levelCheck: { fontSize: 18, color: colors.white, fontWeight: '900' },
 
   nextBtn: {
     backgroundColor: colors.primary,
