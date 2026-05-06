@@ -100,7 +100,7 @@ def suggest_schedule(user_id: int, db: Session = Depends(get_db)):
     try:
         groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
         response = groq_client.chat.completions.create(
-            model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            model=os.getenv("GROQ_SCHEDULE_MODEL", "llama-3.1-8b-instant"),
             messages=[{"role": "user", "content": prompt}],
             max_tokens=4096,
         )
@@ -238,7 +238,7 @@ def suggest_schedule_onboarding(data: OnboardingRequest):
     try:
         groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
         response = groq_client.chat.completions.create(
-            model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            model=os.getenv("GROQ_SCHEDULE_MODEL", "llama-3.1-8b-instant"),
             messages=[{"role": "user", "content": prompt}],
             max_tokens=4096,
         )
