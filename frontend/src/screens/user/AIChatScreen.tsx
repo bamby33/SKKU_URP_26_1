@@ -12,6 +12,7 @@ import * as Speech from 'expo-speech';
 import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from 'expo-speech-recognition';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RouteProp } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
@@ -19,6 +20,7 @@ import { sendChat, api } from '../../api/client';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'AIChat'>;
+  route: RouteProp<RootStackParamList, 'AIChat'>;
 };
 
 type Message = {
@@ -94,7 +96,7 @@ function WaveformIcon({
   );
 }
 
-export default function AIChatScreen({ navigation }: Props) {
+export default function AIChatScreen({ navigation, route }: Props) {
   const scrollRef    = useRef<ScrollView>(null);
   const pulseAnim    = useRef(new Animated.Value(1)).current;
   const fadeAnim     = useRef(new Animated.Value(0)).current;
@@ -122,18 +124,28 @@ export default function AIChatScreen({ navigation }: Props) {
   useEffect(() => {
     (async () => {
       const stored = await AsyncStorage.getItem('user_id');
-      if (stored) setUserId(Number(stored));
+      const id = stored ? Number(stored) : null;
+      if (id) setUserId(id);
       const col = await AsyncStorage.getItem('theme_color');
       if (col) setTheme(col);
+
+      // followup 자동 메시지: 팝업 3분 후 AI가 먼저 질문
+      const followUp = route.params?.followUpSchedule;
+      if (followUp && id) {
+        const followMsg = `${followUp} 하셨나요? 😊`;
+        setMessages([
+          { id: 0, role: 'assistant', content: followMsg },
+        ]);
+        Speech.speak(followMsg, { language: 'ko-KR' });
+      } else {
+        Speech.speak(GREETING, { language: 'ko-KR' });
+      }
     })();
 
     // 페이드 인
     Animated.timing(fadeAnim, {
       toValue: 1, duration: 300, useNativeDriver: true,
     }).start();
-
-    // 진입 시 TTS 인사
-    Speech.speak(GREETING, { language: 'ko-KR' });
   }, []);
 
   // ── 마이크 링 펄스 ─────────────────────────────────────────────────────────

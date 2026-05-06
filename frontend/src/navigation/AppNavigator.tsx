@@ -73,7 +73,7 @@ export type RootStackParamList = {
   Feedback: { scheduleId: number; achieved: boolean; title: string };
   Emergency: { stage?: 'stage_1' | 'stage_2' | 'stage_3' };
   GuardianReport: undefined;
-  AIChat: undefined;
+  AIChat: { followUpSchedule?: string; followUpId?: number } | undefined;
   TodayScheduleEdit: undefined;
   WeekScheduleEdit: undefined;
 };

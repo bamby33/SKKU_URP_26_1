@@ -43,15 +43,19 @@ const nowHHMM    = () => {
 const DRAWER_W = 260;
 
 export default function ScheduleScreen({ navigation }: Props) {
-  const bounceAnim   = useRef(new Animated.Value(0)).current;
-  const drawerAnim   = useRef(new Animated.Value(DRAWER_W)).current;
+  const bounceAnim    = useRef(new Animated.Value(0)).current;
+  const drawerAnim    = useRef(new Animated.Value(DRAWER_W)).current;
+  const countdownAnim = useRef(new Animated.Value(1)).current;
+  const countdownRef  = useRef<Animated.CompositeAnimation | null>(null);
+  const aiFollowupRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const followupSchedRef = useRef<Schedule | null>(null);
   const announcedRef  = useRef<Set<number>>(new Set());
   const snoozeRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
   const todaySchedRef = useRef<Schedule[]>([]);
   const recordingRef    = useRef<Audio.Recording | null>(null);
   const meterInterval   = useRef<ReturnType<typeof setInterval> | null>(null);
   const userIdRef       = useRef<number | null>(null);
-  const lastApiCallRef  = useRef<number>(0); // API 디바운스용
+  const lastApiCallRef  = useRef<number>(0);
 
   const [schedules,        setSchedules]        = useState<Schedule[]>([]);
   const [loading,          setLoading]          = useState(true);
@@ -62,7 +66,9 @@ export default function ScheduleScreen({ navigation }: Props) {
   const [nowTime,          setNowTime]          = useState(nowHHMM());
   const [changeRequests,   setChangeRequests]   = useState<any[]>([]);
   const [respondingId,     setRespondingId]     = useState<number | null>(null);
-  const [liveDb,           setLiveDb]           = useState<number | null>(null);
+  const [achieveRate,      setAchieveRate]      = useState(0);
+  const [achieveCount,     setAchieveCount]     = useState(0);
+  const [achieveTotal,     setAchieveTotal]     = useState(0);
 
   // 시간 갱신 (1분마다)
   useEffect(() => {
@@ -100,29 +106,37 @@ export default function ScheduleScreen({ navigation }: Props) {
     );
   };
 
-  // 스케줄 알림
-  const announce = (s: Schedule) => {
-    Speech.speak(`${getEmoji(s.title)} ${s.title} 시간이에요! 지금 할 준비가 됐나요?`, { language: 'ko-KR' });
-    setPending(s);
-  };
-  const handleConfirm = () => {
-    if (!pending) return;
-    const s = pending; setPending(null);
-    if (snoozeRef.current) clearTimeout(snoozeRef.current);
-    navigation.navigate('Feedback', { scheduleId: s.id, achieved: true, title: s.title });
+  // ── 카운트다운 ─────────────────────────────────────────────────────────────
+  const COUNTDOWN_MS = 8000; // 8초
+
+  const startCountdown = (s: Schedule) => {
+    countdownAnim.setValue(1);
+    followupSchedRef.current = s;
+    const anim = Animated.timing(countdownAnim, {
+      toValue: 0, duration: COUNTDOWN_MS, useNativeDriver: false,
+    });
+    countdownRef.current = anim;
+    anim.start(({ finished }) => {
+      if (finished) {
+        // 카운트다운 완료 → 팝업 닫고 3분 후 AI 전환
+        setPending(null);
+        scheduleAiFollowup(s);
+      }
+    });
   };
 
-  const handleMissed = () => {
-    if (!pending) return;
-    const s = pending; setPending(null);
-    if (snoozeRef.current) clearTimeout(snoozeRef.current);
-    navigation.navigate('Feedback', { scheduleId: s.id, achieved: false, title: s.title });
+  const scheduleAiFollowup = (s: Schedule) => {
+    if (aiFollowupRef.current) clearTimeout(aiFollowupRef.current);
+    aiFollowupRef.current = setTimeout(() => {
+      navigation.navigate('AIChat', { followUpSchedule: s.title, followUpId: s.id });
+    }, 10 * 1000); // 테스트용 10초 (실제: 3 * 60 * 1000)
   };
-  const handleSnooze = () => {
-    const s = pending; setPending(null);
-    Speech.speak('알겠어요! 3분 뒤에 다시 알려드릴게요', { language: 'ko-KR' });
-    if (snoozeRef.current) clearTimeout(snoozeRef.current);
-    snoozeRef.current = setTimeout(() => { if (s) announce(s); }, 3 * 60 * 1000);
+
+  // ── 스케줄 알림 ────────────────────────────────────────────────────────────
+  const announce = (s: Schedule) => {
+    Speech.speak(`${s.title} 시간이에요! 지금 할 준비가 됐나요?`, { language: 'ko-KR' });
+    setPending(s);
+    startCountdown(s);
   };
 
   // AI 마이크 — AIChat 화면으로 페이드 전환
@@ -160,6 +174,12 @@ export default function ScheduleScreen({ navigation }: Props) {
         setSchedules(res.data);
         const reqRes = await api.get(`/schedule-requests/user/${id}/pending`);
         setChangeRequests(reqRes.data);
+        try {
+          const reportRes = await api.get(`/schedules/user/${id}/today-report`);
+          setAchieveRate(reportRes.data.achievement_rate ?? 0);
+          setAchieveCount(reportRes.data.achieved ?? 0);
+          setAchieveTotal(reportRes.data.total ?? 0);
+        } catch {}
       } catch (e) { console.warn(e); }
       finally { setLoading(false); }
     })();
@@ -189,7 +209,6 @@ export default function ScheduleScreen({ navigation }: Props) {
         const raw = s.metering ?? -160;
         // expo-av: -160~0 dBFS. +100 오프셋으로 대략적인 dB 환산
         const approxDB = raw + 100;
-        setLiveDb(Math.round(approxDB));
         console.log(`[Meter] raw=${raw.toFixed(1)} approx=${approxDB.toFixed(1)} dB`);
 
         if (approxDB >= DB_STAGE2) {
@@ -225,7 +244,6 @@ export default function ScheduleScreen({ navigation }: Props) {
 
   const stopMetering = async () => {
     if (meterInterval.current) { clearInterval(meterInterval.current); meterInterval.current = null; }
-    setLiveDb(null);
     if (recordingRef.current) {
       try { await recordingRef.current.stopAndUnloadAsync(); } catch {}
       recordingRef.current = null;
@@ -390,6 +408,18 @@ export default function ScheduleScreen({ navigation }: Props) {
           </TouchableOpacity>
         </View>
 
+        {/* 달성률 바 */}
+        <View style={styles.achieveWrap}>
+          <View style={styles.achieveRow}>
+            <Text style={styles.achieveLabel}>오늘 달성률</Text>
+            <Text style={[styles.achievePct, { color: theme }]}>{achieveRate}%</Text>
+          </View>
+          <View style={styles.achieveTrack}>
+            <Animated.View style={[styles.achieveFill, { width: `${achieveRate}%` as any, backgroundColor: theme }]} />
+          </View>
+          <Text style={styles.achieveSub}>{achieveCount} / {achieveTotal} 완료</Text>
+        </View>
+
         {/* 오늘 일과 타임라인 (flex: 1 — 남은 공간 채움) */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
@@ -487,28 +517,13 @@ export default function ScheduleScreen({ navigation }: Props) {
             <Text style={styles.notifyEmoji}>{pending ? getEmoji(pending.title) : '📋'}</Text>
             <Text style={styles.notifyTime}>{pending?.scheduled_time}</Text>
             <Text style={[styles.notifyTitle, { color: theme }]}>{pending?.title}</Text>
-            <Text style={styles.notifyMsg}>지금 할 시간이에요!{'\n'}준비가 됐나요? 😊</Text>
-            {liveDb !== null && (
-              <View style={styles.dbMeter}>
-                <View style={[
-                  styles.dbBar,
-                  { width: `${Math.min(100, Math.max(0, liveDb))}%` as any,
-                    backgroundColor: liveDb >= DB_STAGE2 ? '#EF4444' : liveDb >= DB_STAGE1 ? '#F59E0B' : '#22C55E' }
-                ]} />
-                <Text style={styles.dbLabel}>{liveDb} dB</Text>
-              </View>
-            )}
-            <View style={styles.notifyRow}>
-              <TouchableOpacity style={[styles.notifyOk, { backgroundColor: theme }]} onPress={handleConfirm}>
-                <Text style={styles.notifyOkText}>✅  했어요!</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.notifyLater} onPress={handleSnooze}>
-                <Text style={styles.notifyLaterText}>⏱  이따 할게요</Text>
-              </TouchableOpacity>
+            <Text style={styles.notifyMsg}>지금 할 시간이에요! 😊</Text>
+            {/* 카운트다운 바 */}
+            <View style={styles.cdTrack}>
+              <Animated.View style={[styles.cdFill, {
+                width: countdownAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
+              }]} />
             </View>
-            <TouchableOpacity style={styles.notifyMissed} onPress={handleMissed}>
-              <Text style={styles.notifyMissedText}>❌  못 했어요</Text>
-            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -764,6 +779,10 @@ const styles = StyleSheet.create({
   notifyMissed:    { width: '100%', backgroundColor: '#FEF2F2', borderRadius: 18, paddingVertical: 14, alignItems: 'center', marginTop: 8 },
   notifyMissedText: { color: '#DC2626', fontWeight: '700', fontSize: 15 },
 
+  // 카운트다운 바
+  cdTrack: { width: '100%', height: 6, backgroundColor: '#E8F5EE', borderRadius: 3, overflow: 'hidden', marginTop: 8 },
+  cdFill:  { height: 6, backgroundColor: '#22C55E', borderRadius: 3 },
+
   // dB 미터
   dbMeter: {
     width: '100%', height: 28, backgroundColor: '#F1F5F9',
@@ -824,6 +843,15 @@ const styles = StyleSheet.create({
   },
   tdText:  { fontSize: 10, fontWeight: '700', textAlign: 'center' },
   tdEmpty: { fontSize: 12, color: '#E2E8F0' },
+
+  // 달성률 바
+  achieveWrap:  { backgroundColor: '#fff', borderRadius: 18, padding: 14, gap: 6, shadowColor: '#0A1F6B', shadowOpacity: 0.05, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2 },
+  achieveRow:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  achieveLabel: { fontSize: 13, fontWeight: '700', color: '#475569' },
+  achievePct:   { fontSize: 15, fontWeight: '900' },
+  achieveTrack: { height: 10, backgroundColor: '#E8F5EE', borderRadius: 5, overflow: 'hidden' },
+  achieveFill:  { height: 10, borderRadius: 5 },
+  achieveSub:   { fontSize: 11, color: '#94A3B8', fontWeight: '600' },
 
   // AI 대화 오버레이
   voiceBg: {
