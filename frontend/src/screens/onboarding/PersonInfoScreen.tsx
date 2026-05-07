@@ -1,6 +1,6 @@
 /**
  * 온보딩 1 · 공통
- * 당사자 기본 정보 입력 (이름 / 나이 / 성별)
+ * 당사자 기본 정보 입력 (이름 / 나이 / 직업 / 장애 유형 / 독립 수행 능력)
  */
 import React, { useState } from 'react';
 import {
@@ -16,40 +16,34 @@ type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'PersonInfo'>;
 };
 
-const GENDERS = [
-  { key: 'male',   label: '남성', emoji: '👦' },
-  { key: 'female', label: '여성', emoji: '👧' },
-];
-
 const DISABILITY_TYPES = [
   { key: 'intellectual', label: '지적 장애' },
   { key: 'autism',       label: '자폐 장애' },
 ];
 
 const DISABILITY_LEVELS = [
-  { key: 'mild',     emoji: '🙂', label: '혼자 할 수 있어요',       sub: '대부분 일과를 스스로 수행' },
-  { key: 'moderate', emoji: '🤝', label: '도움이 조금 필요해요',     sub: '일부 상황에서 지원 필요' },
-  { key: 'severe',   emoji: '💙', label: '도움이 많이 필요해요',     sub: '대부분 상황에서 지원 필요' },
+  { key: 'mild',     label: '혼자 할 수 있어요',     sub: '대부분 일과를 스스로 수행' },
+  { key: 'moderate', label: '도움이 조금 필요해요',   sub: '일부 상황에서 지원 필요' },
+  { key: 'severe',   label: '도움이 많이 필요해요',   sub: '대부분 상황에서 지원 필요' },
 ];
 
 export default function PersonInfoScreen({ navigation }: Props) {
   const [name,            setName]            = useState('');
   const [age,             setAge]             = useState('');
-  const [gender,          setGender]          = useState<string | null>(null);
+  const [occupation,      setOccupation]      = useState('');
   const [disabilityType,  setDisabilityType]  = useState<string | null>(null);
   const [disabilityLevel, setDisabilityLevel] = useState<string | null>(null);
 
   const canNext = name.trim().length > 0 && age.trim().length > 0
-    && gender !== null && disabilityType !== null && disabilityLevel !== null;
+    && disabilityType !== null && disabilityLevel !== null;
 
   const handleNext = () => {
     navigation.navigate('Preferences', {
       userName: name.trim(),
       age: age.trim(),
-      gender: gender!,
       disabilityType: disabilityType!,
       disabilityLevel: disabilityLevel!,
-      occupation: '',
+      occupation: occupation.trim(),
     });
   };
 
@@ -78,7 +72,6 @@ export default function PersonInfoScreen({ navigation }: Props) {
 
           {/* 타이틀 */}
           <View style={styles.titleArea}>
-            <Text style={styles.emoji}>📋</Text>
             <Text style={styles.title}>당사자 정보를{'\n'}알려주세요</Text>
             <Text style={styles.subtitle}>보호하시는 분의 정보를 입력해주세요</Text>
           </View>
@@ -113,24 +106,17 @@ export default function PersonInfoScreen({ navigation }: Props) {
             </View>
           </View>
 
-          {/* 성별 */}
+          {/* 직업 */}
           <View style={styles.fieldGroup}>
-            <Text style={styles.fieldLabel}>성별</Text>
-            <View style={styles.genderRow}>
-              {GENDERS.map((g) => (
-                <TouchableOpacity
-                  key={g.key}
-                  style={[styles.genderBtn, gender === g.key && styles.genderBtnSelected]}
-                  onPress={() => setGender(g.key)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.genderEmoji}>{g.emoji}</Text>
-                  <Text style={[styles.genderLabel, gender === g.key && styles.genderLabelSelected]}>
-                    {g.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+            <Text style={styles.fieldLabel}>직업 / 하는 일 <Text style={styles.optional}>(선택)</Text></Text>
+            <TextInput
+              style={styles.input}
+              placeholder="예) 복지관 다니기, 직업 훈련, 학교 등"
+              placeholderTextColor="#bbb"
+              value={occupation}
+              onChangeText={setOccupation}
+              returnKeyType="next"
+            />
           </View>
 
           {/* 장애 유형 */}
@@ -163,7 +149,6 @@ export default function PersonInfoScreen({ navigation }: Props) {
                   onPress={() => setDisabilityLevel(l.key)}
                   activeOpacity={0.8}
                 >
-                  <Text style={styles.levelEmoji}>{l.emoji}</Text>
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.levelLabel, disabilityLevel === l.key && styles.levelLabelSelected]}>
                       {l.label}
@@ -172,7 +157,9 @@ export default function PersonInfoScreen({ navigation }: Props) {
                       {l.sub}
                     </Text>
                   </View>
-                  {disabilityLevel === l.key && <Text style={styles.levelCheck}>✓</Text>}
+                  {disabilityLevel === l.key && (
+                    <Text style={styles.levelCheck}>확인</Text>
+                  )}
                 </TouchableOpacity>
               ))}
             </View>
@@ -214,17 +201,13 @@ const styles = StyleSheet.create({
   },
   backText: { fontSize: 15, color: colors.primary, fontWeight: '800' },
   stepRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  stepDot: {
-    width: 10, height: 10, borderRadius: 5,
-    backgroundColor: '#d0daf0',
-  },
+  stepDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#d0daf0' },
   stepDotActive: { backgroundColor: colors.primary },
   stepLine: { width: 24, height: 2, backgroundColor: '#d0daf0' },
 
   content: { padding: 24, gap: 22 },
 
   titleArea: { alignItems: 'center', gap: 8, paddingVertical: 8 },
-  emoji: { fontSize: 52 },
   title: {
     fontSize: 24, fontWeight: '900', color: colors.primary,
     textAlign: 'center', lineHeight: 32,
@@ -233,6 +216,7 @@ const styles = StyleSheet.create({
 
   fieldGroup: { gap: 8 },
   fieldLabel: { fontSize: 13, fontWeight: '700', color: colors.primary },
+  optional: { fontSize: 11, fontWeight: '500', color: '#aaa' },
   input: {
     backgroundColor: colors.white,
     borderRadius: 14,
@@ -247,37 +231,15 @@ const styles = StyleSheet.create({
   ageInput: { flex: 1 },
   ageSuffix: { fontSize: 16, fontWeight: '700', color: colors.primary },
 
-  genderRow: { flexDirection: 'row', gap: 10 },
-  genderBtn: {
-    flex: 1,
-    backgroundColor: colors.white,
-    borderRadius: 14,
-    paddingVertical: 14,
-    alignItems: 'center',
-    gap: 4,
-    borderWidth: 2,
-    borderColor: colors.border,
-  },
-  genderBtnSelected: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  genderEmoji: { fontSize: 26 },
-  genderLabel: { fontSize: 13, fontWeight: '700', color: colors.primary },
-  genderLabelSelected: { color: colors.white },
-
   disabilityRow: { flexDirection: 'row', gap: 10 },
   disabilityBtn: {
     flex: 1, backgroundColor: colors.white, borderRadius: 16,
-    paddingVertical: 16, paddingHorizontal: 12, alignItems: 'center', gap: 6,
+    paddingVertical: 16, paddingHorizontal: 12, alignItems: 'center',
     borderWidth: 2, borderColor: colors.border,
   },
   disabilityBtnSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
-  disabilityEmoji: { fontSize: 30 },
   disabilityLabel: { fontSize: 14, fontWeight: '800', color: colors.primary },
   disabilityLabelSelected: { color: colors.white },
-  disabilityDesc: { fontSize: 11, color: '#999', textAlign: 'center', lineHeight: 15 },
-  disabilityDescSelected: { color: 'rgba(255,255,255,0.8)' },
 
   levelCol: { gap: 8 },
   levelBtn: {
@@ -286,12 +248,11 @@ const styles = StyleSheet.create({
     padding: 14, borderWidth: 2, borderColor: colors.border,
   },
   levelBtnSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
-  levelEmoji: { fontSize: 24 },
   levelLabel: { fontSize: 14, fontWeight: '800', color: colors.primary },
   levelLabelSelected: { color: colors.white },
   levelSub: { fontSize: 11, color: '#999', marginTop: 2 },
   levelSubSelected: { color: 'rgba(255,255,255,0.8)' },
-  levelCheck: { fontSize: 18, color: colors.white, fontWeight: '900' },
+  levelCheck: { fontSize: 12, color: colors.white, fontWeight: '700' },
 
   nextBtn: {
     backgroundColor: colors.primary,

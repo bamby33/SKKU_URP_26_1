@@ -114,15 +114,18 @@ export default function WeekScheduleEditScreen({ navigation }: Props) {
   const [blocks,      setBlocks]      = useState<Block[]>([]);
   const [loading,     setLoading]     = useState(true);
   const [saving,      setSaving]      = useState(false);
-  const [aiLoading,   setAiLoading]   = useState(false);
   const [isGuardian,  setIsGuardian]  = useState(false);
+  const [storedUserId, setStoredUserId] = useState<string | null>(null);
   const [tab,         setTab]         = useState<'weekday' | 'weekend'>('weekday');
   const [floating,    setFloating]    = useState<{ item: PaletteItem; x: number; y: number } | null>(null);
 
   const existingIdsRef = useRef<number[]>([]);
 
   useEffect(() => {
-    AsyncStorage.getItem('role').then(role => setIsGuardian(role === 'guardian'));
+    AsyncStorage.multiGet(['role', 'user_id']).then(pairs => {
+      setIsGuardian(pairs[0][1] === 'guardian');
+      setStoredUserId(pairs[1][1]);
+    });
   }, []);
 
   const rootRef      = useRef<View>(null);
@@ -155,34 +158,6 @@ export default function WeekScheduleEditScreen({ navigation }: Props) {
   }, []);
 
   useFocusEffect(useCallback(() => { fetchSchedules(); }, [fetchSchedules]));
-
-  // ── AI 추천 ─────────────────────────────────────────────────────────────────
-  const handleAiSuggest = () => {
-    Alert.alert(
-      '✨ AI 시간표 추천',
-      'AI가 사용자 정보를 바탕으로 맞춤 시간표를 제안해줄게요.\n현재 시간표는 AI 추천으로 교체됩니다.',
-      [
-        { text: '취소', style: 'cancel' },
-        { text: 'AI 추천 받기', onPress: doAiSuggest },
-      ],
-    );
-  };
-
-  const doAiSuggest = async () => {
-    setAiLoading(true);
-    try {
-      const userId = await AsyncStorage.getItem('user_id');
-      if (!userId) return;
-      const res = await api.post(`/ai/suggest-schedule/${userId}`);
-      const suggested: Omit<Block, 'id'>[] = res.data.blocks;
-      setBlocks(suggested.map(b => ({ ...b, id: nid() })));
-    } catch (e: any) {
-      const msg = e?.response?.data?.detail ?? 'AI 추천 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.';
-      Alert.alert('오류', msg);
-    } finally {
-      setAiLoading(false);
-    }
-  };
 
   // ── 블록 삭제 (탭) ──────────────────────────────────────────────────────────
   const handleBlockPress = (block: Block) => {
@@ -250,53 +225,10 @@ export default function WeekScheduleEditScreen({ navigation }: Props) {
   ).current;
 
   // ── 완료 저장 ──────────────────────────────────────────────────────────────
-  const handleComplete = () => {
-    if (isGuardian) {
-      Alert.alert(
-        '일과 변경 요청',
-        '수정된 시간표를 당사자에게 수락 요청으로 보낼까요?',
-        [
-          { text: '취소', style: 'cancel' },
-          { text: '요청 보내기', onPress: doGuardianRequest },
-        ],
-      );
-    } else {
-      Alert.alert('일과 저장', '현재 시간표로 일과를 저장할까요?', [
-        { text: '취소', style: 'cancel' },
-        { text: '저장', onPress: doSave },
-      ]);
-    }
-  };
-
-  const doGuardianRequest = async () => {
-    setSaving(true);
-    try {
-      const userId = await AsyncStorage.getItem('user_id');
-      if (!userId) return;
-      const toAdd = blocks.map(block => ({
-        title: `${block.emoji} ${block.name}`,
-        scheduled_time: toTime(block.startSlot),
-        days_of_week: String(block.day),
-      }));
-      await api.post(`/schedule-requests/user/${userId}`, {
-        change_type: 'week',
-        schedules_to_delete: existingIdsRef.current,
-        schedules_to_add: toAdd,
-      });
-      Alert.alert('전송 완료', '당사자에게 일과 변경 요청을 보냈어요.', [
-        { text: '확인', onPress: () => navigation.goBack() },
-      ]);
-    } catch {
-      Alert.alert('오류', '요청 전송에 실패했어요.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const doSave = async () => {
     setSaving(true);
     try {
-      const userId = await AsyncStorage.getItem('user_id');
+      const userId = storedUserId ?? await AsyncStorage.getItem('user_id');
       if (!userId) return;
       for (const id of existingIdsRef.current) {
         await api.delete(`/schedules/${id}`);
@@ -309,6 +241,12 @@ export default function WeekScheduleEditScreen({ navigation }: Props) {
           days_of_week: String(block.day),
         });
       }
+      if (isGuardian) {
+        await api.post('/notifications/', {
+          user_id: Number(userId),
+          message: '보호자가 일주일 일과를 수정했어요. 확인해보세요.',
+        });
+      }
       Alert.alert('완료', '일과가 저장됐어요!', [
         { text: '확인', onPress: () => navigation.goBack() },
       ]);
@@ -317,6 +255,13 @@ export default function WeekScheduleEditScreen({ navigation }: Props) {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleComplete = () => {
+    Alert.alert('일과 저장', '현재 시간표로 일과를 저장할까요?', [
+      { text: '취소', style: 'cancel' },
+      { text: '저장', onPress: doSave },
+    ]);
   };
 
   // ── 시간표 렌더링 ──────────────────────────────────────────────────────────
@@ -403,18 +348,6 @@ export default function WeekScheduleEditScreen({ navigation }: Props) {
   // ═══════════════════════════════════════════════════════════════════════════
   return (
     <SafeAreaView style={styles.container}>
-      {/* AI 로딩 오버레이 */}
-      <Modal visible={aiLoading} transparent animationType="fade">
-        <View style={styles.aiOverlay}>
-          <View style={styles.aiCard}>
-            <Text style={styles.aiCardEmoji}>✨</Text>
-            <Text style={styles.aiCardTitle}>AI가 시간표를 만들고 있어요</Text>
-            <Text style={styles.aiCardSub}>사용자 정보를 분석 중이에요…</Text>
-            <ActivityIndicator color={colors.primary} size="large" style={{ marginTop: 16 }} />
-          </View>
-        </View>
-      </Modal>
-
       <View
         ref={rootRef}
         style={{ flex: 1 }}
@@ -446,20 +379,10 @@ export default function WeekScheduleEditScreen({ navigation }: Props) {
         {isGuardian && (
           <View style={styles.guardianBanner}>
             <Text style={styles.guardianBannerText}>
-              🔔 보호자 모드 · 완료 시 당사자 수락 요청으로 전송돼요
+              보호자 모드 · 저장 시 당사자에게 알림이 전송돼요
             </Text>
           </View>
         )}
-
-        {/* AI 추천 배너 */}
-        <TouchableOpacity style={styles.aiBanner} onPress={handleAiSuggest} activeOpacity={0.8}>
-          <Text style={styles.aiBannerEmoji}>✨</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.aiBannerTitle}>AI 맞춤 시간표 추천 받기</Text>
-            <Text style={styles.aiBannerSub}>사용자 정보 기반으로 최적의 일과를 제안해드려요</Text>
-          </View>
-          <Text style={styles.aiBannerArrow}>→</Text>
-        </TouchableOpacity>
 
         {/* 탭 */}
         <View style={styles.tabRow}>

@@ -129,11 +129,7 @@ export default function WelcomeScreen({ navigation, route }: Props) {
           <Text style={styles.backText}>← 뒤로</Text>
         </TouchableOpacity>
 
-        <View style={styles.robotArea}>
-          <Animated.Text style={[styles.robotEmoji, { transform: [{ translateY: bounceAnim }] }]}>
-            🤖
-          </Animated.Text>
-        </View>
+        <View style={styles.robotArea} />
 
         <Animated.View style={[
           styles.bubbleWrap,
@@ -141,12 +137,12 @@ export default function WelcomeScreen({ navigation, route }: Props) {
         ]}>
           <View style={styles.bubble}>
             <Text style={styles.bubbleText}>
-              안녕하세요, <Text style={styles.nameHighlight}>{guardianName}</Text>님! 👋
+              안녕하세요, <Text style={styles.nameHighlight}>{guardianName}</Text>님!
             </Text>
           </View>
           <View style={styles.bubble}>
             <Text style={styles.bubbleText}>
-              <Text style={styles.nameHighlight}>{userName}</Text>의 일과를{'\n'}AI가 함께 관리할게요 📅
+              <Text style={styles.nameHighlight}>{userName}</Text>의 일과를{'\n'}AI가 함께 관리할게요
             </Text>
           </View>
           <View style={[styles.bubble, styles.bubbleTyping]}>

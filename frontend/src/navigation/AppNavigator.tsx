@@ -38,7 +38,6 @@ export type ScheduleParam = {
 type SignupBase = {
   userName: string;
   age: string;
-  gender: string;
   disabilityType: string;
   disabilityLevel: string;   // 'mild' | 'moderate' | 'severe'
   occupation: string;
@@ -63,7 +62,7 @@ export type RootStackParamList = {
   PINLogin: undefined;
   Home: undefined;
   PersonInfo: undefined;
-  Preferences: { userName: string; age: string; gender: string; disabilityType: string; disabilityLevel: string; occupation: string };
+  Preferences: { userName: string; age: string; disabilityType: string; disabilityLevel: string; occupation: string };
   BasicSchedule: Omit<SignupBase, 'schedules'>;
   ScheduleSetup: SignupBase;
   AccountSetup: SignupBase;

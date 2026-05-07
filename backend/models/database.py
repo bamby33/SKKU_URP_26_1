@@ -169,6 +169,17 @@ class ScheduleChangeRequest(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class GuardianNotification(Base):
+    """보호자가 일과 수정 시 당사자에게 전달되는 알림"""
+    __tablename__ = "guardian_notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    message = Column(String, nullable=False)
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class ChatMessage(Base):
     """AI-사용자 대화 기록"""
     __tablename__ = "chat_messages"

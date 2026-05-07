@@ -2,6 +2,7 @@
 import json
 import os
 import logging
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -148,6 +149,125 @@ def suggest_schedule(user_id: int, db: Session = Depends(get_db)):
     return {"blocks": blocks}
 
 
+# ── 내일 특이사항 기반 스케줄 업데이트 ───────────────────────────────────────
+
+class TomorrowNoteRequest(BaseModel):
+    user_id: int
+    note: str
+
+
+@router.post("/update-tomorrow")
+def update_tomorrow_schedule(data: TomorrowNoteRequest, db: Session = Depends(get_db)):
+    """보호자가 입력한 내일 특이사항을 바탕으로 AI가 내일 일과를 업데이트"""
+    user = db.query(User).filter(User.id == data.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+
+    # 내일 요일 인덱스 (0=월 ~ 6=일)
+    tomorrow_idx = (datetime.today().weekday() + 1) % 7
+    day_labels = ['월', '화', '수', '목', '금', '토', '일']
+    tomorrow_label = day_labels[tomorrow_idx]
+
+    # 내일 기존 스케줄 조회
+    all_schedules = db.query(Schedule).filter(
+        Schedule.user_id == data.user_id,
+        Schedule.is_active == True,
+    ).all()
+    tomorrow_schedules = [
+        s for s in all_schedules
+        if str(tomorrow_idx) in [d.strip() for d in s.days_of_week.split(',')]
+    ]
+    existing_str = "\n".join(
+        f"- {s.scheduled_time} {s.title}"
+        for s in sorted(tomorrow_schedules, key=lambda x: x.scheduled_time)
+    ) or "등록된 일과 없음"
+
+    disability = DISABILITY_KO.get(str(user.disability_type), user.disability_type)
+    level = LEVEL_KO.get(str(user.disability_level), user.disability_level)
+
+    prompt = f"""발달장애인의 내일({tomorrow_label}요일) 일과를 특이사항에 맞게 수정해주세요.
+
+사용자 정보:
+- 이름: {user.name}
+- 장애 유형: {disability} ({level})
+
+내일의 기존 일과:
+{existing_str}
+
+보호자가 입력한 내일 특이사항:
+{data.note}
+
+지시사항:
+- 특이사항을 최대한 반영하여 내일 하루 일과를 새로 작성하세요
+- 기상·식사·취침 등 기본 루틴은 특이사항으로 변경이 명시된 경우에만 수정하세요
+- 특이사항으로 인한 외출, 병원, 행사 등은 적절한 시간에 추가하세요
+- 발달장애인에게 적합한 규칙적이고 예측 가능한 구성을 유지하세요
+
+아래 JSON 배열 형식으로만 응답하세요. 다른 설명은 절대 포함하지 마세요:
+[
+  {{"start": "07:00", "end": "07:30", "name": "기상·세면", "emoji": "🌅", "color": "#FFB74D"}},
+  ...
+]
+
+규칙:
+- start/end: "HH:MM" 형식, 06:00~22:00 범위
+- emoji: 일과를 가장 잘 표현하는 이모지 하나
+- color: 반드시 이 중 하나 선택 "#FFB74D" "#4CAF7D" "#AB77E8" "#6B9BF2" "#5BB7C0" "#E57373" "#26C6DA" "#AED581" "#FF8A65"
+"""
+
+    try:
+        groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        response = groq_client.chat.completions.create(
+            model=os.getenv("GROQ_SCHEDULE_MODEL", "llama-3.1-8b-instant"),
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=2048,
+        )
+        raw = response.choices[0].message.content or ""
+    except Exception as e:
+        logger.error(f"Groq API error (update-tomorrow): {e}")
+        raise HTTPException(status_code=503, detail=f"AI 서비스 오류: {str(e)}")
+
+    try:
+        cleaned = _clean_json(raw)
+        items = json.loads(cleaned)
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON parse error (update-tomorrow): {e}\nRaw: {raw[:500]}")
+        raise HTTPException(status_code=500, detail="AI 응답을 파싱하지 못했어요.")
+
+    # 기존 내일 스케줄 삭제 또는 요일에서 제거
+    for s in tomorrow_schedules:
+        days = [d.strip() for d in s.days_of_week.split(',') if d.strip() != str(tomorrow_idx)]
+        if not days:
+            db.delete(s)
+        else:
+            s.days_of_week = ','.join(days)
+
+    valid_colors = {
+        "#FFB74D", "#4CAF7D", "#AB77E8", "#6B9BF2",
+        "#5BB7C0", "#E57373", "#26C6DA", "#AED581", "#FF8A65",
+    }
+
+    created = 0
+    for item in items:
+        try:
+            color = item.get("color", "#4CAF7D")
+            if color not in valid_colors:
+                color = "#4CAF7D"
+            db.add(Schedule(
+                user_id=data.user_id,
+                title=f"{item.get('emoji', '📋')} {item['name']}",
+                scheduled_time=item["start"],
+                days_of_week=str(tomorrow_idx),
+                is_active=True,
+            ))
+            created += 1
+        except (KeyError, ValueError):
+            continue
+
+    db.commit()
+    return {"ok": True, "created": created, "tomorrow_day": tomorrow_idx}
+
+
 # ── 회원가입 중 사용 (user_id 없음) ───────────────────────────────────────────
 
 class OnboardingRequest(BaseModel):
@@ -215,6 +335,7 @@ def suggest_schedule_onboarding(data: OnboardingRequest):
 - 발달장애인에게 적합한 규칙적이고 예측 가능한 시간표
 - 반복되는 일상 루틴 강조 (기상, 식사, 취침 등)
 - 위의 기본 시간 정보를 정확하게 반영하세요 (기상·취침·식사 시간 준수)
+- 기상·아침 식사·점심 식사·저녁 식사·취침 시간은 매일(월~일) 반복되는 고정 일과이므로 모든 요일에 빠짐없이 포함하세요
 - 약 복용 시간이 있다면 반드시 포함하세요
 - 하는 일(직장/시설/학교 등)이 있다면 주중 스케줄에 반영
 - 좋아하는 활동과 취미를 여가 시간에 반영

@@ -4,10 +4,10 @@
  * - 일과 종료 후: AI 분석 리포트 표시
  * - 항상: 오늘의 확인사항(이상행동 알림), 내일 스케줄
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
-  Alert, ActivityIndicator, RefreshControl,
+  Alert, ActivityIndicator, RefreshControl, TextInput, Animated,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -37,6 +37,9 @@ type Dashboard = {
   current_schedule: CurrentSchedule | null;
   day_complete: boolean;
   today_report: TodayReport | null;
+  live_achieved: number;
+  live_total: number;
+  live_rate: number;
   behavior_alerts: BehaviorAlert[];
   has_unread: boolean;
   ai_summary: string | null;
@@ -83,6 +86,43 @@ export default function GuardianReportScreen({ navigation }: Props) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [alertsExpanded, setAlertsExpanded] = useState(false);
+  const [tomorrowNote, setTomorrowNote] = useState('');
+  const [updatingNote, setUpdatingNote] = useState(false);
+  const toastOpacity = useRef(new Animated.Value(0)).current;
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    Animated.timing(toastOpacity, { toValue: 1, duration: 250, useNativeDriver: true }).start();
+    toastTimer.current = setTimeout(() => {
+      Animated.timing(toastOpacity, { toValue: 0, duration: 400, useNativeDriver: true }).start();
+    }, 2500);
+  };
+
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+
+  const handleUpdateTomorrow = async () => {
+    if (!tomorrowNote.trim()) {
+      Alert.alert('입력 필요', '내일 특이사항을 입력해주세요.');
+      return;
+    }
+    setUpdatingNote(true);
+    try {
+      const userId = await AsyncStorage.getItem('user_id');
+      if (!userId) return;
+      await api.post('/ai/update-tomorrow', {
+        user_id: Number(userId),
+        note: tomorrowNote.trim(),
+      });
+      showToast();
+      setTomorrowNote('');
+      fetchDashboard();
+    } catch {
+      Alert.alert('오류', 'AI 스케줄 업데이트에 실패했어요. 다시 시도해주세요.');
+    } finally {
+      setUpdatingNote(false);
+    }
+  };
 
   const fetchDashboard = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -259,7 +299,21 @@ export default function GuardianReportScreen({ navigation }: Props) {
             </>
           )}
 
-          {/* ── 2. 오늘의 확인사항 (이상행동 알림) ── */}
+          {/* ── 2. 오늘 달성률 (항상 표시) ── */}
+          <View style={styles.achieveCard}>
+            <View style={styles.achieveRow}>
+              <Text style={styles.achieveTitle}>오늘 일과 달성률</Text>
+              <Text style={styles.achievePct}>{data?.live_rate ?? 0}%</Text>
+            </View>
+            <View style={styles.achieveTrack}>
+              <View style={[styles.achieveFill, { width: `${data?.live_rate ?? 0}%` as any }]} />
+            </View>
+            <Text style={styles.achieveSub}>
+              {data?.live_achieved ?? 0} / {data?.live_total ?? 0} 완료
+            </Text>
+          </View>
+
+          {/* ── 3. 오늘의 확인사항 (이상행동 알림) ── */}
           <TouchableOpacity
             style={styles.alertsHeader}
             onPress={handleAlertsToggle}
@@ -326,20 +380,47 @@ export default function GuardianReportScreen({ navigation }: Props) {
             </View>
           )}
 
-          {/* ── 5. 일과 수정 ── */}
+          {/* ── 5. 내일 특이사항 ── */}
+          <View style={styles.tomorrowNoteCard}>
+            <Text style={styles.tomorrowNoteLabel}>내일 특이사항</Text>
+            <TextInput
+              style={styles.tomorrowNoteInput}
+              placeholder={'예) 내일 12시에 병원 예약이 있어요'}
+              placeholderTextColor="#bbb"
+              value={tomorrowNote}
+              onChangeText={setTomorrowNote}
+              multiline
+              numberOfLines={3}
+              textAlignVertical="top"
+            />
+            <TouchableOpacity
+              style={[styles.updateNoteBtn, updatingNote && { opacity: 0.6 }]}
+              activeOpacity={0.8}
+              onPress={handleUpdateTomorrow}
+              disabled={updatingNote}
+            >
+              {updatingNote
+                ? <ActivityIndicator color="#fff" size="small" />
+                : <Text style={styles.updateNoteBtnText}>스케줄 업데이트하기</Text>
+              }
+            </TouchableOpacity>
+          </View>
+
+          {/* ── 6. 일과 수정 ── */}
           <TouchableOpacity
             style={styles.editBtn}
             activeOpacity={0.8}
-            onPress={() => Alert.alert('일과 수정', '어떤 일과를 수정할까요?', [
-              { text: '취소', style: 'cancel' },
-              { text: '오늘 일과 수정', onPress: () => navigation.navigate('TodayScheduleEdit') },
-              { text: '일주일 일과 수정', onPress: () => navigation.navigate('WeekScheduleEdit') },
-            ])}
+            onPress={() => navigation.navigate('WeekScheduleEdit')}
           >
             <Text style={styles.editBtnText}>✏️  일과 수정하기</Text>
           </TouchableOpacity>
         </ScrollView>
       )}
+
+      {/* 토스트 */}
+      <Animated.View style={[styles.toast, { opacity: toastOpacity }]} pointerEvents="none">
+        <Text style={styles.toastText}>AI가 저장했어요. 내일 스케줄에 반영할게요.</Text>
+      </Animated.View>
     </SafeAreaView>
   );
 }
@@ -502,12 +583,53 @@ const styles = StyleSheet.create({
   aiBody: { fontSize: 12, color: '#065F46', lineHeight: 20, opacity: 0.85 },
 
   /* 일과 수정 버튼 */
+  tomorrowNoteCard: {
+    backgroundColor: colors.white, borderRadius: 16, padding: 16,
+    elevation: 2, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, shadowOffset: { width: 0, height: 2 },
+  },
+  tomorrowNoteLabel: { fontSize: 14, fontWeight: '800', color: colors.guardian, marginBottom: 10 },
+  tomorrowNoteInput: {
+    backgroundColor: '#F8FAFC', borderRadius: 12,
+    borderWidth: 1.5, borderColor: '#E2E8F0',
+    padding: 12, fontSize: 14, color: '#1E293B', minHeight: 72,
+    marginBottom: 10,
+  },
+  updateNoteBtn: {
+    backgroundColor: colors.guardian, borderRadius: 12,
+    paddingVertical: 13, alignItems: 'center',
+    elevation: 3, shadowColor: colors.guardian, shadowOpacity: 0.25,
+    shadowRadius: 8, shadowOffset: { width: 0, height: 3 },
+  },
+  updateNoteBtnText: { color: '#fff', fontSize: 14, fontWeight: '800' },
+
+  toast: {
+    position: 'absolute', bottom: 32, left: 24, right: 24,
+    backgroundColor: '#1E293B', borderRadius: 14,
+    paddingVertical: 14, paddingHorizontal: 18,
+    alignItems: 'center',
+    elevation: 12, shadowColor: '#000', shadowOpacity: 0.25,
+    shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
+  },
+  toastText: { color: '#fff', fontSize: 13, fontWeight: '700', textAlign: 'center' },
+
   editBtn: {
     borderRadius: 16, borderWidth: 1.5, borderColor: colors.guardian + '70',
     paddingVertical: 14, alignItems: 'center', backgroundColor: colors.white,
     elevation: 2, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
   },
   editBtnText: { fontSize: 14, fontWeight: '800', color: colors.guardian },
+
+  /* 달성률 카드 */
+  achieveCard: {
+    backgroundColor: colors.white, borderRadius: 18, padding: 16, gap: 8,
+    elevation: 3, shadowColor: '#000', shadowOpacity: 0.07, shadowRadius: 10, shadowOffset: { width: 0, height: 3 },
+  },
+  achieveRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  achieveTitle: { fontSize: 13, fontWeight: '800', color: '#475569' },
+  achievePct: { fontSize: 22, fontWeight: '900', color: colors.guardian },
+  achieveTrack: { height: 10, backgroundColor: '#F1F5F9', borderRadius: 5, overflow: 'hidden' },
+  achieveFill: { height: 10, borderRadius: 5, backgroundColor: colors.guardian },
+  achieveSub: { fontSize: 11, color: '#94A3B8', fontWeight: '600' },
 
   /* 내일 스케줄 */
   tomorrowCard: {

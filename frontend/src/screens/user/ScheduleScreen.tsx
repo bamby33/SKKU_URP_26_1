@@ -2,7 +2,7 @@
  * 사용자(당사자) 메인 화면
  * 지금 할 일 · 오늘 일과 타임라인 인라인 표시 · AI 마이크
  */
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView,
   StyleSheet, Animated, Easing, Alert, ActivityIndicator,
@@ -12,6 +12,7 @@ import * as Speech from 'expo-speech';
 import { Audio } from 'expo-av';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
@@ -64,8 +65,7 @@ export default function ScheduleScreen({ navigation }: Props) {
   const [pending,          setPending]          = useState<Schedule | null>(null);
   const [theme,            setTheme]            = useState(colors.primary);
   const [nowTime,          setNowTime]          = useState(nowHHMM());
-  const [changeRequests,   setChangeRequests]   = useState<any[]>([]);
-  const [respondingId,     setRespondingId]     = useState<number | null>(null);
+  const [notifications,    setNotifications]    = useState<any[]>([]);
   const [achieveRate,      setAchieveRate]      = useState(0);
   const [achieveCount,     setAchieveCount]     = useState(0);
   const [achieveTotal,     setAchieveTotal]     = useState(0);
@@ -172,8 +172,8 @@ export default function ScheduleScreen({ navigation }: Props) {
         if (col) setTheme(col);
         const res = await getSchedules(id);
         setSchedules(res.data);
-        const reqRes = await api.get(`/schedule-requests/user/${id}/pending`);
-        setChangeRequests(reqRes.data);
+        const notifRes = await api.get(`/notifications/user/${id}/unread`);
+        setNotifications(notifRes.data);
         try {
           const reportRes = await api.get(`/schedules/user/${id}/today-report`);
           setAchieveRate(reportRes.data.achievement_rate ?? 0);
@@ -264,29 +264,13 @@ export default function ScheduleScreen({ navigation }: Props) {
     }
   }, [pending]);
 
-  const handleRespondRequest = async (reqId: number, accept: boolean) => {
-    setRespondingId(reqId);
-    try {
-      const action = accept ? 'accept' : 'reject';
-      await api.put(`/schedule-requests/${reqId}/${action}`);
-      setChangeRequests(p => p.filter(r => r.id !== reqId));
-      if (accept) {
-        // 수락 후 스케줄 새로고침
-        const stored = await AsyncStorage.getItem('user_id');
-        if (stored) {
-          const res = await getSchedules(Number(stored));
-          setSchedules(res.data);
-        }
-        Alert.alert('수락 완료', '일과가 변경됐어요! 😊');
-      } else {
-        Alert.alert('거절 완료', '보호자의 일과 변경 요청을 거절했어요.');
-      }
-    } catch {
-      Alert.alert('오류', '처리에 실패했어요. 다시 시도해주세요.');
-    } finally {
-      setRespondingId(null);
-    }
-  };
+  useFocusEffect(useCallback(() => {
+    const uid = userIdRef.current;
+    if (!uid) return;
+    api.get(`/notifications/user/${uid}/unread`)
+      .then(r => setNotifications(r.data))
+      .catch(() => {});
+  }, []));
 
   const handleLogout = () => {
     Alert.alert('로그아웃', '로그아웃 할까요?', [
@@ -328,47 +312,20 @@ export default function ScheduleScreen({ navigation }: Props) {
       {/* ─── 상단 고정 영역 ─── */}
       <View style={styles.body}>
 
-        {/* 보호자 일과 변경 요청 카드 */}
-        {changeRequests.map(req => (
-          <View key={req.id} style={styles.reqCard}>
-            <Text style={styles.reqTitle}>📨 보호자가 일과를 바꾸고 싶어해요</Text>
-            <Text style={styles.reqDesc}>
-              {req.change_type === 'today' ? '오늘 일과' : '일주일 일과'}
-              {' · '}
-              {req.schedules_to_delete_count > 0 && `삭제 ${req.schedules_to_delete_count}개 `}
-              {req.schedules_to_add_count > 0 && `추가 ${req.schedules_to_add_count}개`}
-            </Text>
-            {req.schedules_to_add.length > 0 && (
-              <View style={styles.reqPreview}>
-                {req.schedules_to_add.slice(0, 3).map((s: any, i: number) => (
-                  <Text key={i} style={styles.reqPreviewItem}>
-                    {s.title}  {s.scheduled_time}
-                  </Text>
-                ))}
-                {req.schedules_to_add.length > 3 && (
-                  <Text style={styles.reqPreviewMore}>+{req.schedules_to_add.length - 3}개 더…</Text>
-                )}
-              </View>
-            )}
-            <View style={styles.reqBtns}>
-              <TouchableOpacity
-                style={styles.rejectBtn}
-                onPress={() => handleRespondRequest(req.id, false)}
-                disabled={respondingId === req.id}
-              >
-                <Text style={styles.rejectText}>😕  싫어요</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.acceptBtn, { backgroundColor: theme }]}
-                onPress={() => handleRespondRequest(req.id, true)}
-                disabled={respondingId === req.id}
-              >
-                {respondingId === req.id
-                  ? <ActivityIndicator color="#fff" size="small" />
-                  : <Text style={styles.acceptText}>😊  괜찮아요!</Text>
-                }
-              </TouchableOpacity>
-            </View>
+        {/* 보호자 알림 카드 */}
+        {notifications.map(n => (
+          <View key={n.id} style={styles.notifCard}>
+            <Text style={styles.notifMsg}>{n.message}</Text>
+            <TouchableOpacity
+              style={[styles.notifReadBtn, { backgroundColor: theme }]}
+              activeOpacity={0.8}
+              onPress={async () => {
+                await api.put(`/notifications/${n.id}/read`);
+                setNotifications(p => p.filter(x => x.id !== n.id));
+              }}
+            >
+              <Text style={styles.notifReadText}>확인</Text>
+            </TouchableOpacity>
           </View>
         ))}
 
@@ -624,28 +581,19 @@ const styles = StyleSheet.create({
 
   body: { flex: 1, paddingHorizontal: 18, paddingTop: 16, paddingBottom: 16, gap: 12 },
 
-  // 보호자 변경 요청 카드
-  reqCard: {
-    backgroundColor: '#FFF7ED',
-    borderRadius: 20, padding: 16, gap: 8,
-    borderWidth: 2, borderColor: '#FED7AA',
-    shadowColor: '#F59E0B', shadowOpacity: 0.15, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3,
+  // 보호자 알림 카드
+  notifCard: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: 16, padding: 14,
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    borderWidth: 1.5, borderColor: '#BFDBFE',
+    shadowColor: '#3B82F6', shadowOpacity: 0.1, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 2,
   },
-  reqTitle: { fontSize: 15, fontWeight: '900', color: '#92400E' },
-  reqDesc:  { fontSize: 12, color: '#B45309', fontWeight: '600' },
-  reqPreview: { backgroundColor: '#FFFBEB', borderRadius: 12, padding: 10, gap: 4 },
-  reqPreviewItem: { fontSize: 12, color: '#78350F', fontWeight: '600' },
-  reqPreviewMore: { fontSize: 11, color: '#B45309' },
-  reqBtns:   { flexDirection: 'row', gap: 8, marginTop: 4 },
-  rejectBtn: {
-    flex: 1, paddingVertical: 12, borderRadius: 14, backgroundColor: '#F1F5F9', alignItems: 'center',
+  notifMsg: { flex: 1, fontSize: 13, fontWeight: '700', color: '#1E40AF', lineHeight: 20 },
+  notifReadBtn: {
+    paddingVertical: 8, paddingHorizontal: 16, borderRadius: 20,
   },
-  rejectText: { fontSize: 14, fontWeight: '700', color: '#64748B' },
-  acceptBtn: {
-    flex: 2, paddingVertical: 12, borderRadius: 14, alignItems: 'center',
-    elevation: 3, shadowOpacity: 0.2, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
-  },
-  acceptText: { fontSize: 14, fontWeight: '900', color: '#fff' },
+  notifReadText: { fontSize: 13, fontWeight: '800', color: '#fff' },
 
   // 현재 일과 카드
   nowCard: {

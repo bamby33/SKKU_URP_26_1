@@ -90,22 +90,22 @@ def get_dashboard(user_id: int, db: Session = Depends(get_db)):
     ).first()
 
     day_complete = daily_report is not None
+
+    # 일과 진행 중/완료 모두 달성률 실시간 계산
+    schedule_ids = [s.id for s in today_schedules]
+    today_start = datetime.combine(date.today(), datetime.min.time())
+    logs = db.query(ScheduleLog).filter(
+        ScheduleLog.schedule_id.in_(schedule_ids),
+        ScheduleLog.log_date >= today_start
+    ).all() if schedule_ids else []
+    log_map = {l.schedule_id: l for l in logs}
+
+    live_achieved = sum(1 for l in logs if l.status == ScheduleStatus.ACHIEVED)
+    live_total = len(today_schedules)
+    live_rate = round(live_achieved / live_total * 100) if live_total > 0 else 0
+
     today_report = None
-
     if day_complete:
-        # ScheduleLog에서 달성 현황 조회
-        schedule_ids = [s.id for s in today_schedules]
-        today_start = datetime.combine(date.today(), datetime.min.time())
-        logs = db.query(ScheduleLog).filter(
-            ScheduleLog.schedule_id.in_(schedule_ids),
-            ScheduleLog.log_date >= today_start
-        ).all()
-        log_map = {l.schedule_id: l for l in logs}
-
-        achieved = sum(1 for l in logs if l.status == ScheduleStatus.ACHIEVED)
-        total = len(today_schedules)
-        rate = round(achieved / total * 100) if total > 0 else 0
-
         items = []
         for s in today_schedules:
             log = log_map.get(s.id)
@@ -116,12 +116,11 @@ def get_dashboard(user_id: int, db: Session = Depends(get_db)):
                 "time": s.scheduled_time,
                 "status": status,
             })
-
         today_report = {
             "date": today,
             "achieved": daily_report.achieved,
             "total": daily_report.total,
-            "achievement_rate": rate,
+            "achievement_rate": live_rate,
             "items": items,
         }
 
@@ -168,6 +167,9 @@ def get_dashboard(user_id: int, db: Session = Depends(get_db)):
         "current_schedule": current_schedule,
         "day_complete": day_complete,
         "today_report": today_report,
+        "live_achieved": live_achieved,
+        "live_total": live_total,
+        "live_rate": live_rate,
         "behavior_alerts": behavior_alerts,
         "has_unread": has_unread,
         "ai_summary": daily_report.ai_summary if daily_report else None,

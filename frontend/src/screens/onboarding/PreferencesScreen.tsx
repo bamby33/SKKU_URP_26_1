@@ -23,7 +23,7 @@ const LIKE_SUGGESTIONS = ['음악 듣기', '산책', '그림 그리기', '블록
 const DISLIKE_SUGGESTIONS = ['큰 소리', '갑작스러운 변화', '낯선 장소', '긴 대기', '붐비는 곳'];
 
 export default function PreferencesScreen({ navigation, route }: Props) {
-  const { userName, age, gender, disabilityType, disabilityLevel, occupation } = route.params;
+  const { userName, age, disabilityType, disabilityLevel, occupation } = route.params;
 
   const [likes, setLikes] = useState<string[]>([]);
   const [dislikes, setDislikes] = useState<string[]>([]);
@@ -64,7 +64,7 @@ export default function PreferencesScreen({ navigation, route }: Props) {
 
   const handleNext = () => {
     navigation.navigate('BasicSchedule', {
-      userName, age, gender, disabilityType, disabilityLevel, occupation,
+      userName, age, disabilityType, disabilityLevel, occupation,
       likes, dislikes, problemNotes, dailyLife, themeColor,
     });
   };
@@ -92,7 +92,6 @@ export default function PreferencesScreen({ navigation, route }: Props) {
 
           {/* 타이틀 */}
           <View style={styles.titleArea}>
-            <Text style={styles.emoji}>💝</Text>
             <Text style={styles.title}>{userName}의{'\n'}특성을 알려주세요</Text>
             <Text style={styles.subtitle}>AI가 더 잘 도와줄 수 있어요</Text>
           </View>
@@ -100,7 +99,6 @@ export default function PreferencesScreen({ navigation, route }: Props) {
           {/* 좋아하는 것 */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionEmoji}>😊</Text>
               <Text style={styles.sectionTitle}>좋아하는 것</Text>
             </View>
 
@@ -157,7 +155,6 @@ export default function PreferencesScreen({ navigation, route }: Props) {
           {/* 싫어하는 것 */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionEmoji}>😣</Text>
               <Text style={styles.sectionTitle}>싫어하는 것 / 힘든 것</Text>
             </View>
 
@@ -211,7 +208,6 @@ export default function PreferencesScreen({ navigation, route }: Props) {
           {/* 취미 및 일상 */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionEmoji}>🌿</Text>
               <Text style={styles.sectionTitle}>취미 및 일상</Text>
             </View>
             <Text style={styles.notesHint}>
@@ -233,7 +229,6 @@ export default function PreferencesScreen({ navigation, route }: Props) {
           {/* 문제행동 특이사항 */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionEmoji}>📝</Text>
               <Text style={styles.sectionTitle}>문제행동 특이사항</Text>
             </View>
             <Text style={styles.notesHint}>

@@ -27,10 +27,9 @@ type TimePickerProps = {
   value: string;
   onChange: (v: string) => void;
   label: string;
-  emoji: string;
 };
 
-function TimeField({ value, onChange, label, emoji }: TimePickerProps) {
+function TimeField({ value, onChange, label }: TimePickerProps) {
   const [visible, setVisible] = useState(false);
   const [selHour, setSelHour] = useState(value.split(':')[0]);
   const [selMin, setSelMin] = useState(value.split(':')[1]);
@@ -49,7 +48,6 @@ function TimeField({ value, onChange, label, emoji }: TimePickerProps) {
   return (
     <>
       <TouchableOpacity style={styles.timeField} onPress={open} activeOpacity={0.8}>
-        <Text style={styles.timeFieldEmoji}>{emoji}</Text>
         <Text style={styles.timeFieldLabel}>{label}</Text>
         <View style={styles.timeFieldValue}>
           <Text style={styles.timeFieldValueText}>{value}</Text>
@@ -59,7 +57,7 @@ function TimeField({ value, onChange, label, emoji }: TimePickerProps) {
       <Modal visible={visible} transparent animationType="fade">
         <View style={styles.pickerOverlay}>
           <View style={styles.pickerCard}>
-            <Text style={styles.pickerTitle}>{emoji} {label}</Text>
+            <Text style={styles.pickerTitle}>{label}</Text>
             <Text style={styles.pickerSelected}>{selHour}:{selMin}</Text>
 
             {/* 시 선택 */}
@@ -136,7 +134,6 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
       const res = await api.post('/ai/suggest-schedule-onboarding', {
         name:             params.userName,
         age:              params.age,
-        gender:           params.gender,
         disability_type:  params.disabilityType,
         occupation:       params.occupation,
         likes:            params.likes,
@@ -192,7 +189,6 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
 
         {/* 타이틀 */}
         <View style={styles.titleArea}>
-          <Text style={styles.emoji}>🕐</Text>
           <Text style={styles.title}>기본 시간을{'\n'}설정해주세요</Text>
           <Text style={styles.subtitle}>AI가 맞춤 시간표를 만들어드려요</Text>
         </View>
@@ -200,23 +196,23 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
         {/* 기본 루틴 섹션 */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>하루 기본 루틴</Text>
-          <TimeField value={wakeTime}      onChange={setWakeTime}      label="기상 시간"  emoji="🌅" />
-          <TimeField value={breakfastTime} onChange={setBreakfastTime} label="아침 식사"  emoji="🍳" />
-          <TimeField value={lunchTime}     onChange={setLunchTime}     label="점심 식사"  emoji="🍱" />
-          <TimeField value={dinnerTime}    onChange={setDinnerTime}    label="저녁 식사"  emoji="🍽️" />
-          <TimeField value={sleepTime}     onChange={setSleepTime}     label="취침 시간"  emoji="🌙" />
+          <TimeField value={wakeTime}      onChange={setWakeTime}      label="기상 시간" />
+          <TimeField value={breakfastTime} onChange={setBreakfastTime} label="아침 식사" />
+          <TimeField value={lunchTime}     onChange={setLunchTime}     label="점심 식사" />
+          <TimeField value={dinnerTime}    onChange={setDinnerTime}    label="저녁 식사" />
+          <TimeField value={sleepTime}     onChange={setSleepTime}     label="취침 시간" />
         </View>
 
         {/* 약 복용 섹션 */}
         <View style={styles.section}>
           <View style={styles.medHeader}>
-            <Text style={styles.sectionTitle}>💊 약 복용 시간</Text>
+            <Text style={styles.sectionTitle}>약 복용 시간</Text>
             <Text style={styles.medOptional}>선택</Text>
           </View>
 
           {medTimes.map((t, i) => (
             <View key={i} style={styles.medChip}>
-              <Text style={styles.medChipText}>💊 {t}</Text>
+              <Text style={styles.medChipText}>{t}</Text>
               <TouchableOpacity onPress={() => setMedTimes(p => p.filter((_, j) => j !== i))}>
                 <Text style={styles.medChipDel}>✕</Text>
               </TouchableOpacity>
@@ -225,7 +221,7 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
 
           {addingMed ? (
             <View style={styles.medAddRow}>
-              <TimeField value={medPickerVal} onChange={setMedPickerVal} label="약 복용" emoji="💊" />
+              <TimeField value={medPickerVal} onChange={setMedPickerVal} label="약 복용" />
               <View style={styles.medAddBtns}>
                 <TouchableOpacity style={styles.medCancelBtn} onPress={() => setAddingMed(false)}>
                   <Text style={styles.medCancelText}>취소</Text>
@@ -255,7 +251,7 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
               <Text style={styles.generateBtnText}>AI가 시간표를 만들고 있어요...</Text>
             </View>
           ) : (
-            <Text style={styles.generateBtnText}>✨ AI 맞춤 시간표 생성하기</Text>
+            <Text style={styles.generateBtnText}>AI 맞춤 시간표 생성하기</Text>
           )}
         </TouchableOpacity>
 
