@@ -5,10 +5,45 @@ from pydantic import BaseModel
 from typing import Optional
 from models.database import get_db, ChatMessage, User, BehaviorLog, FeedbackStage
 from agents.care_agent import chat as agent_chat
-from datetime import datetime
+from datetime import datetime, date, timedelta
 import json
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+
+def _build_behavior_context(logs: list) -> str:
+    """최근 7일 행동 로그를 AI 프롬프트용 텍스트로 요약"""
+    if not logs:
+        return ""
+
+    today = date.today()
+    today_logs = [l for l in logs if l.logged_at.date() == today]
+
+    s1 = sum(1 for l in logs if l.stage == FeedbackStage.STAGE_1)
+    s2 = sum(1 for l in logs if l.stage == FeedbackStage.STAGE_2)
+    s3 = sum(1 for l in logs if l.stage == FeedbackStage.STAGE_3)
+    t1_today = sum(1 for l in today_logs if l.stage == FeedbackStage.STAGE_1)
+    t2_today = sum(1 for l in today_logs if l.stage == FeedbackStage.STAGE_2)
+
+    # 자주 나타나는 트리거 top-2
+    from collections import Counter
+    triggers = [l.trigger for l in logs if l.trigger]
+    top_triggers = [t for t, _ in Counter(triggers).most_common(2)]
+
+    recent_lines = "\n".join(
+        f"  - {l.logged_at.strftime('%m/%d %H:%M')} {l.stage.value} (원인: {l.trigger or '미상'})"
+        for l in logs[:5]
+    )
+
+    return f"""
+[행동 패턴 기록 (최근 7일)]
+오늘 발생: 1단계 {t1_today}건 / 2단계 {t2_today}건
+7일 누계: 1단계 {s1}건 / 2단계 {s2}건 / 진정(3단계) {s3}건
+주요 원인: {', '.join(top_triggers) if top_triggers else '없음'}
+최근 기록:
+{recent_lines}
+이 정보를 바탕으로 오늘 사용자의 상태를 파악하고 선제적으로 공감하며 대화하세요.
+"""
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
@@ -59,6 +94,14 @@ def send_message(data: ChatRequest, db: Session = Depends(get_db)):
         "feedback_mode": user.feedback_mode or "voice",
     }
 
+    # 최근 7일 행동 로그 → 패턴 요약
+    seven_days_ago = datetime.now() - timedelta(days=7)
+    behavior_logs = db.query(BehaviorLog).filter(
+        BehaviorLog.user_id == data.user_id,
+        BehaviorLog.logged_at >= seven_days_ago,
+    ).order_by(BehaviorLog.logged_at.desc()).limit(20).all()
+    behavior_context = _build_behavior_context(behavior_logs)
+
     # AI 에이전트 호출
     try:
         result = agent_chat(
@@ -67,6 +110,7 @@ def send_message(data: ChatRequest, db: Session = Depends(get_db)):
             history=history,
             context=data.context,
             user_profile=user_profile,
+            behavior_context=behavior_context,
         )
     except Exception as e:
         err = str(e)
@@ -134,6 +178,22 @@ def schedule_followup(user_id: int, db: Session = Depends(get_db)):
     from scheduler.jobs import schedule_stage3_followup
     schedule_stage3_followup(user_id, delay_minutes=60)
     return {"success": True, "message": "60분 후 followup 예약 완료"}
+
+
+class BehaviorNoteRequest(BaseModel):
+    note: str
+
+
+@router.post("/save-behavior-note/{user_id}")
+def save_behavior_note(user_id: int, data: BehaviorNoteRequest, db: Session = Depends(get_db)):
+    """행동 팔로업 대화에서 파악한 원인을 가장 최근 BehaviorLog에 저장"""
+    log = db.query(BehaviorLog).filter(
+        BehaviorLog.user_id == user_id
+    ).order_by(BehaviorLog.logged_at.desc()).first()
+    if log:
+        log.note = data.note
+        db.commit()
+    return {"success": True}
 
 
 @router.get("/history/{user_id}")

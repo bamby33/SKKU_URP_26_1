@@ -122,6 +122,7 @@ class BehaviorLog(Base):
     trigger = Column(String, nullable=True)             # 감지 방식 (voice/gps/manual)
     decibel_level = Column(Float, nullable=True)        # 음성 데시벨
     ai_response = Column(Text, nullable=True)           # AI가 한 말
+    note = Column(Text, nullable=True)                  # 팔로업 대화에서 파악한 행동 원인
     guardian_notified = Column(Boolean, default=False)
     is_read = Column(Boolean, default=False)            # 보호자가 확인했는지
     logged_at = Column(DateTime, default=datetime.utcnow)

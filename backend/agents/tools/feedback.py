@@ -90,19 +90,32 @@ def _get_stage1_feedback(user: User, schedule_title: str = None) -> dict:
         }
 
 
+def _parse_likes(special_notes: str) -> list[str]:
+    """special_notes에서 '좋아하는 것' 파싱"""
+    for line in (special_notes or "").split("\n"):
+        if "좋아하는 것:" in line:
+            likes_str = line.split("좋아하는 것:")[1].strip()
+            return [l.strip() for l in likes_str.split(",") if l.strip()]
+    return []
+
+
 def _get_stage2_feedback(user: User) -> dict:
     """
     2단계: 문제 행동 중 피드백 (슬라이드 7 기준)
     - 낮고 일정한 톤으로 짧게 전달
-    - 다른 행동으로 전환 유도
+    - 다른 행동으로 전환 유도 (사용자가 좋아하는 것 우선)
     - 보호자/기관 연락
     """
+    user_likes = _parse_likes(user.special_notes or "")
+    redirect_examples = user_likes[:3] if user_likes else ["음악 듣기", "좋아하는 영상 보기", "잠깐 산책"]
+    redirect_suggestion = f"{redirect_examples[0]} 해볼까요?" if redirect_examples else "좋아하는 것을 잠깐 해볼까요?"
+
     return {
         "message": "괜찮아요. 잠깐 쉬어요.",
         "tone": "low_steady",
         "action": "redirect_behavior",
-        "redirect_suggestion": "좋아하는 것을 잠깐 해볼까요?",
-        "redirect_examples": ["음악 듣기", "좋아하는 영상 보기", "잠깐 산책"],
+        "redirect_suggestion": redirect_suggestion,
+        "redirect_examples": redirect_examples,
         "notify_guardian": True,
         "guardian_message": "사용자가 흥분 상태입니다. 확인이 필요할 수 있습니다."
     }

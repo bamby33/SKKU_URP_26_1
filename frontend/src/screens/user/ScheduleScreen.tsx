@@ -10,9 +10,10 @@ import {
 } from 'react-native';
 import * as Speech from 'expo-speech';
 import { Audio } from 'expo-av';
+import { Accelerometer } from 'expo-sensors';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, RouteProp } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
@@ -22,6 +23,7 @@ const { width: SW } = Dimensions.get('window');
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Schedule'>;
+  route: RouteProp<RootStackParamList, 'Schedule'>;
 };
 type Schedule = {
   id: number;
@@ -43,20 +45,25 @@ const nowHHMM    = () => {
 
 const DRAWER_W = 260;
 
-export default function ScheduleScreen({ navigation }: Props) {
+export default function ScheduleScreen({ navigation, route }: Props) {
   const bounceAnim    = useRef(new Animated.Value(0)).current;
   const drawerAnim    = useRef(new Animated.Value(DRAWER_W)).current;
   const countdownAnim = useRef(new Animated.Value(1)).current;
-  const countdownRef  = useRef<Animated.CompositeAnimation | null>(null);
-  const aiFollowupRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const followupSchedRef = useRef<Schedule | null>(null);
-  const announcedRef  = useRef<Set<number>>(new Set());
-  const snoozeRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const todaySchedRef = useRef<Schedule[]>([]);
-  const recordingRef    = useRef<Audio.Recording | null>(null);
-  const meterInterval   = useRef<ReturnType<typeof setInterval> | null>(null);
-  const userIdRef       = useRef<number | null>(null);
-  const lastApiCallRef  = useRef<number>(0);
+  const countdownRef       = useRef<Animated.CompositeAnimation | null>(null);
+  const aiFollowupRef      = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const followupSchedRef   = useRef<Schedule | null>(null);
+  const announcedRef       = useRef<Set<number>>(new Set());
+  const snoozeRef          = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const todaySchedRef      = useRef<Schedule[]>([]);
+  const recordingRef       = useRef<Audio.Recording | null>(null);
+  const meterInterval      = useRef<ReturnType<typeof setInterval> | null>(null);
+  const burstTimerRef      = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const userIdRef          = useRef<number | null>(null);
+  const lastApiCallRef     = useRef<number>(0);
+  const behaviorFollowupRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const achievePopupAnim   = useRef(new Animated.Value(1)).current;
+  const accelSubRef        = useRef<ReturnType<typeof Accelerometer.addListener> | null>(null);
+  const accelShakeCountRef = useRef(0);
 
   const [schedules,        setSchedules]        = useState<Schedule[]>([]);
   const [loading,          setLoading]          = useState(true);
@@ -69,6 +76,8 @@ export default function ScheduleScreen({ navigation }: Props) {
   const [achieveRate,      setAchieveRate]      = useState(0);
   const [achieveCount,     setAchieveCount]     = useState(0);
   const [achieveTotal,     setAchieveTotal]     = useState(0);
+  const [showAchievePopup, setShowAchievePopup] = useState(false);
+  const [popupAchieveRate, setPopupAchieveRate] = useState(0);
 
   // 시간 갱신 (1분마다)
   useEffect(() => {
@@ -106,6 +115,39 @@ export default function ScheduleScreen({ navigation }: Props) {
     );
   };
 
+  // ── 달성 팝업 ──────────────────────────────────────────────────────────────
+  const showAchievementPopup = (rate: number) => {
+    setPopupAchieveRate(rate);
+    achievePopupAnim.setValue(1);
+    setShowAchievePopup(true);
+    Animated.timing(achievePopupAnim, {
+      toValue: 0, duration: 5000, useNativeDriver: false,
+    }).start(({ finished }) => {
+      if (finished) setShowAchievePopup(false);
+    });
+  };
+
+  // justAchieved / behaviorResolved 파라미터 처리
+  useEffect(() => {
+    if (route.params?.justAchieved) {
+      const rate = route.params.achieveRate ?? achieveRate;
+      setAchieveRate(rate);
+      showAchievementPopup(rate);
+      navigation.setParams({ justAchieved: undefined, achieveRate: undefined });
+    }
+  }, [route.params?.justAchieved]);
+
+  useEffect(() => {
+    if (route.params?.behaviorResolved) {
+      navigation.setParams({ behaviorResolved: undefined });
+      startMeterting(); // AI 대화 복귀 후 1분간 dB 측정
+      if (behaviorFollowupRef.current) clearTimeout(behaviorFollowupRef.current);
+      behaviorFollowupRef.current = setTimeout(() => {
+        navigation.navigate('AIChat', { behaviorFollowup: true });
+      }, 10 * 60 * 1000); // 10분 후 AI 팔로업
+    }
+  }, [route.params?.behaviorResolved]);
+
   // ── 카운트다운 ─────────────────────────────────────────────────────────────
   const COUNTDOWN_MS = 8000; // 8초
 
@@ -134,7 +176,15 @@ export default function ScheduleScreen({ navigation }: Props) {
 
   // ── 스케줄 알림 ────────────────────────────────────────────────────────────
   const announce = (s: Schedule) => {
-    Speech.speak(`${s.title} 시간이에요! 지금 할 준비가 됐나요?`, { language: 'ko-KR' });
+    startMeterting(); // 음성 시작 전 측정 켜기
+    Speech.speak(`${s.title} 시간이에요! 지금 할 준비가 됐나요?`, {
+      language: 'ko-KR',
+      onDone: () => {
+        // 음성 종료 시점부터 1분 타이머 재설정
+        if (burstTimerRef.current) clearTimeout(burstTimerRef.current);
+        burstTimerRef.current = setTimeout(() => stopMetering(), METER_DURATION);
+      },
+    });
     setPending(s);
     startCountdown(s);
   };
@@ -186,45 +236,44 @@ export default function ScheduleScreen({ navigation }: Props) {
   }, []);
 
   // ── 데시벨 모니터링 ────────────────────────────────────────────────────────
-  const DB_STAGE2 = 85;
-  const DB_STAGE1 = 70;
+  const DB_STAGE2 = 70;
+  const DB_STAGE1 = 55;
+
+  // 알림/AI 대화 후 1분간 dB 측정
+  const METER_DURATION = 60000; // 1분
 
   const startMeterting = async () => {
+    if (recordingRef.current) return; // 이미 측정 중이면 skip
     try {
       const { status } = await Audio.requestPermissionsAsync();
-      if (status !== 'granted') {
-        console.warn('[Meter] 마이크 권한 없음');
-        return;
-      }
+      if (status !== 'granted') return;
       await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
       const { recording } = await Audio.Recording.createAsync({
         ...Audio.RecordingOptionsPresets.HIGH_QUALITY,
         isMeteringEnabled: true,
       });
       recordingRef.current = recording;
+      startAccelerometer(); // dB와 함께 시작
+
+      // 1분 후 자동 종료
+      burstTimerRef.current = setTimeout(() => stopMetering(), METER_DURATION);
 
       meterInterval.current = setInterval(async () => {
         const s = await recording.getStatusAsync();
         if (!s.isRecording) return;
-        const raw = s.metering ?? -160;
-        // expo-av: -160~0 dBFS. +100 오프셋으로 대략적인 dB 환산
-        const approxDB = raw + 100;
-        console.log(`[Meter] raw=${raw.toFixed(1)} approx=${approxDB.toFixed(1)} dB`);
+        const approxDB = (s.metering ?? -160) + 100;
 
         if (approxDB >= DB_STAGE2) {
           await stopMetering();
           setPending(null);
-          navigation.navigate('Emergency', { stage: 'stage_2' });
+          navigation.navigate('AIChat', { behaviorAlert: true });
           const uid = userIdRef.current;
           if (uid) {
             api.post(`/chat/log-behavior/${uid}`, {
-              stage: 'stage_2',
-              trigger: 'voice_decibel',
-              decibel: approxDB,
+              stage: 'stage_2', trigger: 'voice_decibel', decibel: approxDB,
             }).catch(() => {});
           }
         } else if (approxDB >= DB_STAGE1) {
-          // 30초에 한 번만 API 호출 (429 방지)
           const now = Date.now();
           if (now - lastApiCallRef.current > 30000) {
             lastApiCallRef.current = now;
@@ -232,7 +281,7 @@ export default function ScheduleScreen({ navigation }: Props) {
             if (uid) {
               api.post('/chat/', {
                 user_id: uid,
-                message: '(스케줄 알림 중 반응 감지)',
+                message: '(알림 중 반응 감지)',
                 context: { decibel: approxDB },
               }).catch(() => {});
             }
@@ -243,26 +292,54 @@ export default function ScheduleScreen({ navigation }: Props) {
   };
 
   const stopMetering = async () => {
+    if (burstTimerRef.current) { clearTimeout(burstTimerRef.current); burstTimerRef.current = null; }
     if (meterInterval.current) { clearInterval(meterInterval.current); meterInterval.current = null; }
     if (recordingRef.current) {
       try { await recordingRef.current.stopAndUnloadAsync(); } catch {}
       recordingRef.current = null;
     }
+    stopAccelerometer(); // dB와 함께 종료
   };
 
-  // 컴포넌트 언마운트 시 recording 정리
+  // 언마운트 시 정리
   useEffect(() => {
     return () => { stopMetering(); };
   }, []);
 
-  // pending 모달 열릴 때 메터링 시작 / 닫힐 때 중지
-  useEffect(() => {
-    if (pending) {
-      startMeterting();
-    } else {
-      stopMetering();
-    }
-  }, [pending]);
+  // ── 가속도계 (dB와 동일 조건에서 활성화) ─────────────────────────────────
+  const ACCEL_THRESHOLD = 2.5;
+  const ACCEL_SHAKE_MIN = 3;
+
+  const startAccelerometer = () => {
+    if (accelSubRef.current) return;
+    accelShakeCountRef.current = 0;
+    Accelerometer.setUpdateInterval(200);
+    accelSubRef.current = Accelerometer.addListener(({ x, y, z }) => {
+      const magnitude = Math.sqrt(x * x + y * y + z * z);
+      if (magnitude > ACCEL_THRESHOLD) {
+        accelShakeCountRef.current += 1;
+        if (accelShakeCountRef.current >= ACCEL_SHAKE_MIN) {
+          accelShakeCountRef.current = 0;
+          setPending(null);
+          const uid = userIdRef.current;
+          if (uid) {
+            api.post(`/chat/log-behavior/${uid}`, {
+              stage: 'stage_2', trigger: 'accelerometer',
+            }).catch(() => {});
+          }
+          navigation.navigate('AIChat', { behaviorAlert: true });
+        }
+      } else {
+        accelShakeCountRef.current = 0;
+      }
+    });
+  };
+
+  const stopAccelerometer = () => {
+    accelSubRef.current?.remove();
+    accelSubRef.current = null;
+    accelShakeCountRef.current = 0;
+  };
 
   useFocusEffect(useCallback(() => {
     const uid = userIdRef.current;
@@ -352,14 +429,22 @@ export default function ScheduleScreen({ navigation }: Props) {
           <TouchableOpacity
             style={[styles.contactPill, { borderColor: theme + '60' }]}
             activeOpacity={0.75}
-            onPress={() => Alert.alert('보호자 연락', '보호자에게 연락합니다.')}>
+            onPress={async () => {
+              const uid = userIdRef.current;
+              if (uid) api.post(`/guardian/user/${uid}/emergency`).catch(() => {});
+              Alert.alert('보호자 연락', '보호자에게 알림을 보냈어요.');
+            }}>
             <Text style={styles.contactPillIcon}>👨‍👩‍👧</Text>
             <Text style={[styles.contactPillText, { color: theme }]}>보호자 연락</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.contactPill, { borderColor: theme + '60' }]}
             activeOpacity={0.75}
-            onPress={() => Alert.alert('기관 연락', '기관에 연락합니다.')}>
+            onPress={async () => {
+              const uid = userIdRef.current;
+              if (uid) api.post(`/guardian/user/${uid}/emergency`).catch(() => {});
+              Alert.alert('기관 연락', '기관에 알림을 보냈어요.');
+            }}>
             <Text style={styles.contactPillIcon}>🏢</Text>
             <Text style={[styles.contactPillText, { color: theme }]}>기관 연락</Text>
           </TouchableOpacity>
@@ -479,6 +564,23 @@ export default function ScheduleScreen({ navigation }: Props) {
             <View style={styles.cdTrack}>
               <Animated.View style={[styles.cdFill, {
                 width: countdownAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
+              }]} />
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ====== 달성 팝업 ====== */}
+      <Modal visible={showAchievePopup} animationType="fade" transparent statusBarTranslucent>
+        <View style={styles.notifyBg}>
+          <View style={styles.notifyCard}>
+            <Text style={styles.notifyEmoji}>🎉</Text>
+            <Text style={[styles.notifyTitle, { color: theme }]}>잘하셨어요!</Text>
+            <Text style={styles.notifyMsg}>오늘 달성률</Text>
+            <Text style={[styles.achievePopupRate, { color: theme }]}>{popupAchieveRate}%</Text>
+            <View style={styles.cdTrack}>
+              <Animated.View style={[styles.cdFill, {
+                width: achievePopupAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
               }]} />
             </View>
           </View>
@@ -726,6 +828,8 @@ const styles = StyleSheet.create({
   notifyLaterText: { color: '#475569', fontWeight: '800', fontSize: 16 },
   notifyMissed:    { width: '100%', backgroundColor: '#FEF2F2', borderRadius: 18, paddingVertical: 14, alignItems: 'center', marginTop: 8 },
   notifyMissedText: { color: '#DC2626', fontWeight: '700', fontSize: 15 },
+
+  achievePopupRate: { fontSize: 48, fontWeight: '900', lineHeight: 56 },
 
   // 카운트다운 바
   cdTrack: { width: '100%', height: 6, backgroundColor: '#E8F5EE', borderRadius: 3, overflow: 'hidden', marginTop: 8 },

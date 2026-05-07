@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from groq import Groq
 from dotenv import load_dotenv
-from models.database import get_db, User, Schedule
+from models.database import get_db, User, Schedule, ScheduleLog, ScheduleStatus, BehaviorLog, FeedbackStage
+from datetime import datetime, timedelta
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -29,6 +30,48 @@ LEVEL_KO = {
 }
 
 
+def _get_behavior_notes(user_id: int, db: Session, days: int = 30) -> str:
+    """최근 N일 행동 원인 메모 요약"""
+    since = datetime.now() - timedelta(days=days)
+    logs = db.query(BehaviorLog).filter(
+        BehaviorLog.user_id == user_id,
+        BehaviorLog.note != None,
+        BehaviorLog.logged_at >= since,
+    ).order_by(BehaviorLog.logged_at.desc()).limit(5).all()
+    if not logs:
+        return ""
+    lines = [
+        f"- {l.logged_at.strftime('%m/%d')} 문제행동 원인: {l.note}"
+        for l in logs
+    ]
+    return "\n[최근 문제행동 원인 (스케줄 조정에 반드시 반영하세요)]\n" + "\n".join(lines) + "\n"
+
+
+def _get_missed_reasons(user_id: int, db: Session, days: int = 30) -> str:
+    """최근 N일 미수행 이유 요약"""
+    since = datetime.now() - timedelta(days=days)
+    logs = (
+        db.query(ScheduleLog, Schedule)
+        .join(Schedule, ScheduleLog.schedule_id == Schedule.id)
+        .filter(
+            Schedule.user_id == user_id,
+            ScheduleLog.status == ScheduleStatus.MISSED,
+            ScheduleLog.note != None,
+            ScheduleLog.log_date >= since,
+        )
+        .order_by(ScheduleLog.log_date.desc())
+        .limit(10)
+        .all()
+    )
+    if not logs:
+        return ""
+    lines = [
+        f"- '{s.title}' 미수행 이유: {l.note} ({l.log_date.strftime('%m/%d')})"
+        for l, s in logs
+    ]
+    return "\n[최근 미수행 이유 (스케줄 조정에 반드시 반영하세요)]\n" + "\n".join(lines) + "\n"
+
+
 def _to_slot(hhmm: str) -> int:
     h, m = map(int, hhmm.split(":"))
     return (h - START_H) * 2 + round(m / 30)
@@ -36,6 +79,7 @@ def _to_slot(hhmm: str) -> int:
 
 def _clean_json(text: str) -> str:
     text = text.strip()
+    # 코드블록 제거
     if "```" in text:
         parts = text.split("```")
         for part in parts:
@@ -43,14 +87,21 @@ def _clean_json(text: str) -> str:
             if part.startswith("json"):
                 part = part[4:].strip()
             if part.startswith("["):
-                return part
-    if text.startswith("["):
-        return text
+                text = part
+                break
+    # 첫 번째 완전한 배열만 추출 (Extra data 방지)
     start = text.find("[")
-    end = text.rfind("]")
-    if start != -1 and end != -1:
-        return text[start:end + 1]
-    return text
+    if start == -1:
+        return text
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == '[':
+            depth += 1
+        elif text[i] == ']':
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return text[start:]
 
 
 @router.post("/suggest-schedule/{user_id}")
@@ -69,6 +120,8 @@ def suggest_schedule(user_id: int, db: Session = Depends(get_db)):
     level = LEVEL_KO.get(str(user.disability_level), user.disability_level)
     notes = user.special_notes or "없음"
     existing_str = ", ".join(existing_titles) if existing_titles else "없음"
+    missed_reasons = _get_missed_reasons(user_id, db)
+    behavior_notes = _get_behavior_notes(user_id, db)
 
     prompt = f"""다음 발달장애인을 위한 일주일 생활 시간표를 추천해주세요.
 
@@ -77,13 +130,14 @@ def suggest_schedule(user_id: int, db: Session = Depends(get_db)):
 - 장애 유형: {disability} ({level})
 - 특이사항: {notes}
 - 기존 일과 항목: {existing_str}
-
+{missed_reasons}{behavior_notes}
 요구사항:
 - 발달장애인에게 적합한 규칙적이고 예측 가능한 시간표
 - 반복되는 일상 루틴 강조 (기상, 식사, 취침 등)
 - 적당한 여가와 활동 포함
 - 주중(월~금)과 주말(토~일) 패턴 구분
 - 하루 8~10개 항목
+- 미수행 이유가 있는 일과는 시간대·장소·내용을 조정하거나 대안을 제안하세요
 
 아래 JSON 배열 형식으로만 응답하세요. 다른 설명은 절대 포함하지 마세요:
 [
