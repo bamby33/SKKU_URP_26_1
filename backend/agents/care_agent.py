@@ -133,9 +133,9 @@ FEEDBACK_STYLE = {
 }
 
 
-def _build_system_prompt(user_profile: dict | None) -> str:
+def _build_system_prompt(user_profile: dict | None, behavior_context: str = "") -> str:
     if not user_profile:
-        return BASE_SYSTEM_PROMPT
+        return BASE_SYSTEM_PROMPT + (("\n" + behavior_context) if behavior_context else "")
 
     name    = user_profile.get("name", "사용자")
     d_type  = (user_profile.get("disability_type") or "intellectual").upper()
@@ -146,19 +146,28 @@ def _build_system_prompt(user_profile: dict | None) -> str:
     guideline = DISABILITY_GUIDELINES.get(d_type, {}).get(d_level, "")
     style     = FEEDBACK_STYLE.get(f_mode, "")
 
+    # special_notes에서 좋아하는 것 파싱
+    likes_str = ""
+    for line in notes.split("\n"):
+        if "좋아하는 것:" in line:
+            likes_str = line.split("좋아하는 것:")[1].strip()
+            break
+
     profile_section = f"""
 [현재 사용자 정보]
 이름: {name}
 장애 유형: {d_type} / {d_level}
 특이사항: {notes if notes else "없음"}
+좋아하는 것: {likes_str if likes_str else "미입력"}
 피드백 방식: {f_mode}
 
 [개별화 대화 지침]
 - {guideline}
 - {style}
 - 반드시 "{name}" 이름을 가끔 불러주며 친근하게 대화하세요.
+- stage_2 전환 유도 시 반드시 "{likes_str if likes_str else '좋아하는 것'}"을 자연스럽게 언급하세요.
 """
-    return BASE_SYSTEM_PROMPT + profile_section
+    return BASE_SYSTEM_PROMPT + profile_section + (("\n" + behavior_context) if behavior_context else "")
 
 
 def _execute_tool(tool_name: str, tool_args: dict) -> dict:
@@ -185,6 +194,7 @@ def chat(
     history: list[dict] | None = None,
     context: dict | None = None,
     user_profile: dict | None = None,
+    behavior_context: str = "",
 ) -> dict[str, Any]:
     # 컨텍스트를 메시지에 포함
     user_content = message
@@ -201,11 +211,16 @@ def chat(
                 f"[스케줄 확인 요청: schedule_id={context['schedule_id']}, 결과={achieved_str}. "
                 f"반드시 check_schedule 툴을 호출하여 DB에 기록하세요.]"
             )
+        if context.get("behavior_stage"):
+            ctx_parts.append(
+                f"[행동 감지: 현재 사용자가 {context['behavior_stage']} 상태입니다. "
+                f"즉시 detect_user_response → provide_feedback(stage=\"{context['behavior_stage']}\") 순서로 호출하세요.]"
+            )
         if ctx_parts:
             user_content = " ".join(ctx_parts) + " " + message
 
     # 메시지 구성 (OpenAI 형식)
-    messages = [{"role": "system", "content": _build_system_prompt(user_profile)}]
+    messages = [{"role": "system", "content": _build_system_prompt(user_profile, behavior_context)}]
     for msg in (history or []):
         role = "user" if msg["role"] == "user" else "assistant"
         messages.append({"role": role, "content": msg["content"]})

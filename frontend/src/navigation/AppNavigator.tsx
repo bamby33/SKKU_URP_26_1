@@ -69,11 +69,11 @@ export type RootStackParamList = {
   AccountSetup: SignupBase;
   PINSetup: AccountInfo;
   Welcome: AccountInfo & { pins: PINItem[] };
-  Schedule: undefined;
+  Schedule: { justAchieved?: boolean; achieveRate?: number; behaviorResolved?: boolean } | undefined;
   Feedback: { scheduleId: number; achieved: boolean; title: string };
   Emergency: { stage?: 'stage_1' | 'stage_2' | 'stage_3' };
   GuardianReport: undefined;
-  AIChat: { followUpSchedule?: string; followUpId?: number } | undefined;
+  AIChat: { followUpSchedule?: string; followUpId?: number; behaviorAlert?: boolean; behaviorFollowup?: boolean } | undefined;
   TodayScheduleEdit: undefined;
   WeekScheduleEdit: undefined;
 };

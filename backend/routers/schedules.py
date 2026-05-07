@@ -79,10 +79,14 @@ def check_schedule_direct(data: ScheduleCheckRequest, db: Session = Depends(get_
 def get_today_report(user_id: int, db: Session = Depends(get_db)):
     """오늘 스케줄 달성 현황"""
     today = date.today()
-    schedules = db.query(Schedule).filter(
+    today_dow = str(today.weekday())  # 0=월 ~ 6=일
+
+    all_schedules = db.query(Schedule).filter(
         Schedule.user_id == user_id,
         Schedule.is_active == True
     ).all()
+    # 오늘 요일에 해당하는 스케줄만
+    schedules = [s for s in all_schedules if today_dow in s.days_of_week.split(",")]
 
     schedule_ids = [s.id for s in schedules]
     logs = db.query(ScheduleLog).filter(

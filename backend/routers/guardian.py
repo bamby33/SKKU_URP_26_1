@@ -1,5 +1,6 @@
 """보호자 대시보드 API"""
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from models.database import (
     get_db, Schedule, ScheduleLog, ScheduleStatus,
@@ -196,6 +197,22 @@ def test_sms(user_id: int, db: Session = Depends(get_db)):
         extra_info="SMS 연동 테스트 메시지입니다."
     )
     return result
+
+
+class MissedScheduleRequest(BaseModel):
+    schedule_title: str
+    reason: str = ""
+
+
+@router.post("/user/{user_id}/missed-schedule")
+def notify_missed_schedule(user_id: int, body: MissedScheduleRequest, db: Session = Depends(get_db)):
+    """당사자가 일과를 미수행했을 때 보호자에게 SMS 알림"""
+    from agents.tools.messaging import send_message as sms_send
+    msg = f"'{body.schedule_title}' 일과를 수행하지 못했습니다."
+    if body.reason:
+        msg += f" 이유: {body.reason}"
+    result = sms_send(user_id=user_id, message_type="schedule_miss", extra_info=msg)
+    return {"success": result.get("success", False)}
 
 
 @router.put("/user/{user_id}/mark-alerts-read")

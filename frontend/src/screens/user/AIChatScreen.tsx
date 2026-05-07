@@ -23,6 +23,8 @@ type Props = {
   route: RouteProp<RootStackParamList, 'AIChat'>;
 };
 
+type FollowupPhase = 'ask' | 'why' | 'done' | null;
+
 type Message = {
   id: number;
   role: 'user' | 'assistant';
@@ -107,9 +109,19 @@ export default function AIChatScreen({ navigation, route }: Props) {
   const [messages,  setMessages]  = useState<Message[]>([
     { id: 0, role: 'assistant', content: GREETING },
   ]);
-  const [listening,  setListening]  = useState(false);
-  const [aiLoading,  setAiLoading]  = useState(false);
-  const [inputText,  setInputText]  = useState('');
+  const [listening,     setListening]     = useState(false);
+  const [aiLoading,     setAiLoading]     = useState(false);
+  const [inputText,     setInputText]     = useState('');
+  const [followupPhase, setFollowupPhase] = useState<FollowupPhase>(null);
+  const whyRespondedRef        = useRef(false);
+  const behaviorReturnedRef    = useRef(false); // 중복 복귀 방지
+  const behaviorNoteRef        = useRef(false); // 팔로업 원인 저장 여부
+  const behaviorRecRef     = useRef<import('expo-av').Audio.Recording | null>(null);
+  const behaviorMeterRef   = useRef<ReturnType<typeof setInterval> | null>(null);
+  const meterStopTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const calmCountRef       = useRef(0); // 기준 이하 연속 횟수
+  const DB_CALM = 55; // 이 값 이하로 지속되면 진정으로 판단
+  const METER_DURATION = 60000; // 음성 종료 후 1분
 
   // ── 음성 인식 ──────────────────────────────────────────────────────────────
   useSpeechRecognitionEvent('start', () => setListening(true));
@@ -129,16 +141,25 @@ export default function AIChatScreen({ navigation, route }: Props) {
       const col = await AsyncStorage.getItem('theme_color');
       if (col) setTheme(col);
 
-      // followup 자동 메시지: 팝업 3분 후 AI가 먼저 질문
-      const followUp = route.params?.followUpSchedule;
-      if (followUp && id) {
-        const followMsg = `${followUp} 하셨나요? 😊`;
-        setMessages([
-          { id: 0, role: 'assistant', content: followMsg },
-        ]);
-        Speech.speak(followMsg, { language: 'ko-KR' });
+      const followUp    = route.params?.followUpSchedule;
+      const isBehavior  = route.params?.behaviorAlert;
+      const isFollowup  = route.params?.behaviorFollowup;
+
+      if (followUp) {
+        const msg = `${followUp} 하셨나요? 😊`;
+        setMessages([{ id: 0, role: 'assistant', content: msg }]);
+        setFollowupPhase('ask');
+        speakWithMeter(msg);
+      } else if (isBehavior) {
+        const msg = '무슨 일이에요? 😊 괜찮아요, 저한테 이야기해줘도 돼요';
+        setMessages([{ id: 0, role: 'assistant', content: msg }]);
+        speakWithMeter(msg);
+      } else if (isFollowup) {
+        const msg = '아까 무슨 일이 있었나요? 지금은 괜찮으신가요? 😊';
+        setMessages([{ id: 0, role: 'assistant', content: msg }]);
+        speakWithMeter(msg);
       } else {
-        Speech.speak(GREETING, { language: 'ko-KR' });
+        speakWithMeter(GREETING);
       }
     })();
 
@@ -170,6 +191,65 @@ export default function AIChatScreen({ navigation, route }: Props) {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
   }, [messages]);
 
+  // ── dB 모니터링 (항상 켜짐) ────────────────────────────────────────────────
+  const stopBehaviorMeter = async () => {
+    if (meterStopTimerRef.current) { clearTimeout(meterStopTimerRef.current); meterStopTimerRef.current = null; }
+    if (behaviorMeterRef.current) { clearInterval(behaviorMeterRef.current); behaviorMeterRef.current = null; }
+    if (behaviorRecRef.current) {
+      try { await behaviorRecRef.current.stopAndUnloadAsync(); } catch {}
+      behaviorRecRef.current = null;
+    }
+  };
+
+  // 음성 종료 후 1분 타이머 리셋
+  const resetMeterTimer = () => {
+    if (meterStopTimerRef.current) clearTimeout(meterStopTimerRef.current);
+    meterStopTimerRef.current = setTimeout(() => stopBehaviorMeter(), METER_DURATION);
+  };
+
+  // 음성 재생 + 종료 후 1분 타이머
+  const speakWithMeter = (text: string) => {
+    if (meterStopTimerRef.current) { clearTimeout(meterStopTimerRef.current); meterStopTimerRef.current = null; }
+    Speech.speak(text, { language: 'ko-KR', onDone: resetMeterTimer });
+  };
+
+  useEffect(() => {
+    // 항상 dB 모니터링 시작
+    const { Audio } = require('expo-av');
+    (async () => {
+      try {
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+        const { recording } = await Audio.Recording.createAsync({
+          ...Audio.RecordingOptionsPresets.HIGH_QUALITY,
+          isMeteringEnabled: true,
+        });
+        behaviorRecRef.current = recording;
+        calmCountRef.current = 0;
+
+        behaviorMeterRef.current = setInterval(async () => {
+          const s = await recording.getStatusAsync();
+          if (!s.isRecording) return;
+          const approxDB = (s.metering ?? -160) + 100;
+
+          // behaviorAlert 모드: 진정 감지 → 자동 복귀
+          if (route.params?.behaviorAlert) {
+            if (approxDB < DB_CALM) {
+              calmCountRef.current += 1;
+              if (calmCountRef.current >= 20 && !behaviorReturnedRef.current) {
+                behaviorReturnedRef.current = true;
+                await stopBehaviorMeter();
+                navigation.navigate('Schedule', { behaviorResolved: true });
+              }
+            } else {
+              calmCountRef.current = 0;
+            }
+          }
+        }, 500);
+      } catch {}
+    })();
+    return () => { stopBehaviorMeter(); };
+  }, []);
+
   // ── 마이크 토글 ────────────────────────────────────────────────────────────
   const handleMic = async () => {
     if (listening) { ExpoSpeechRecognitionModule.stop(); return; }
@@ -182,17 +262,51 @@ export default function AIChatScreen({ navigation, route }: Props) {
     setMessages(prev => prev.map(m => m.id === msgId ? { ...m, choices: undefined, aacButtons: undefined } : m));
   };
 
+  const DONE_KW     = ['응', '네', '했어', '했어요', '했습니다', '완료', '했다', '했죠', '했는데', '했거든'];
+  const MISSED_KW   = ['아니', '못', '안 했', '안했', '못했', '아직', '못 했'];
+
+  const detectAchieved = (text: string): 'achieved' | 'missed' | null => {
+    const t = text.trim();
+    if (MISSED_KW.some(k => t.includes(k))) return 'missed';
+    if (DONE_KW.some(k => t.includes(k))) return 'achieved';
+    return null;
+  };
+
   const handleSend = async (text: string, fromMsgId?: number) => {
     if (!userId || aiLoading || !text.trim()) return;
 
-    // 버튼 선택 시 해당 메시지의 선택지 제거
     if (fromMsgId !== undefined) clearChoices(fromMsgId);
 
     setMessages(prev => [...prev, { id: Date.now(), role: 'user', content: text }]);
     setAiLoading(true);
 
+    // behaviorFollowup 모드: 첫 응답을 행동 원인으로 저장
+    if (route.params?.behaviorFollowup && !behaviorNoteRef.current) {
+      behaviorNoteRef.current = true;
+      api.post(`/chat/save-behavior-note/${userId}`, { note: text }).catch(() => {});
+    }
+
+    // followup ask 단계: 유저 발화에서 했는지 파악
+    let detectedResult: 'achieved' | 'missed' | null = null;
+    if (followupPhase === 'ask') {
+      detectedResult = detectAchieved(text);
+      if (detectedResult === 'missed') {
+        setFollowupPhase('why');
+        whyRespondedRef.current = false;
+        // note는 이유를 들은 후에 저장 (아래 why 단계에서 처리)
+      } else if (detectedResult === 'achieved') {
+        setFollowupPhase('done');
+        const followId = route.params?.followUpId;
+        if (followId) api.post('/schedules/check', { schedule_id: followId, achieved: true }).catch(() => {});
+      }
+    }
+
     try {
-      const res = await sendChat(userId, text);
+      // behaviorAlert 모드: 첫 응답에 stage_2 컨텍스트 명시
+      const chatContext = route.params?.behaviorAlert
+        ? { behavior_stage: 'stage_2' }
+        : undefined;
+      const res = await sendChat(userId, text, chatContext);
       const { reply, stage, feedback } = res.data;
       if (reply) {
         const newMsg: Message = { id: Date.now() + 1, role: 'assistant', content: reply };
@@ -201,19 +315,53 @@ export default function AIChatScreen({ navigation, route }: Props) {
           newMsg.aacButtons = feedback.aac_buttons ?? undefined;
         }
         setMessages(prev => [...prev, newMsg]);
-        Speech.speak(reply, { language: 'ko-KR' });
+        speakWithMeter(reply);
       }
+
+      // 달성 확인 후 달성률 조회 → 메인 복귀
+      if (detectedResult === 'achieved') {
+        let rate = 0;
+        try {
+          const r = await api.get(`/schedules/user/${userId}/today-report`);
+          rate = r.data.achievement_rate ?? 0;
+        } catch {}
+        setTimeout(() => navigation.navigate('Schedule', { justAchieved: true, achieveRate: rate }), 2500);
+      }
+
+      // 못했어요 이유 들은 뒤 → note 포함해서 저장 + 보호자 알림 + 메인 복귀
+      if (followupPhase === 'why' && !whyRespondedRef.current) {
+        whyRespondedRef.current = true;
+        setFollowupPhase('done');
+        const followId = route.params?.followUpId;
+        if (followId) {
+          api.post('/schedules/check', {
+            schedule_id: followId, achieved: false, note: text,
+          }).catch(() => {});
+        }
+        api.post(`/guardian/user/${userId}/missed-schedule`, {
+          schedule_title: route.params?.followUpSchedule ?? '',
+          reason: text,
+        }).catch(() => {});
+        setTimeout(() => navigation.navigate('Schedule', {}), 3000);
+      }
+
       if (stage === 'stage_2') {
         api.post(`/chat/log-behavior/${userId}`, { stage: 'stage_2', trigger: 'text_agitation' }).catch(() => {});
-        navigation.navigate('Emergency', { stage: 'stage_2' });
+        if (!route.params?.behaviorAlert) navigation.navigate('Emergency', { stage: 'stage_2' });
       } else if (stage === 'stage_3') {
         api.post(`/chat/log-behavior/${userId}`, { stage: 'stage_3', trigger: 'text_calm' }).catch(() => {});
-        navigation.navigate('Emergency', { stage: 'stage_3' });
+        if (route.params?.behaviorAlert && !behaviorReturnedRef.current) {
+          behaviorReturnedRef.current = true;
+          stopBehaviorMeter();
+          setTimeout(() => navigation.navigate('Schedule', { behaviorResolved: true }), 2000);
+        } else if (!route.params?.behaviorAlert) {
+          navigation.navigate('Emergency', { stage: 'stage_3' });
+        }
       }
     } catch {
       const err = '죄송해요, 잠시 후 다시 시도해 주세요 😢';
       setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: err }]);
-      Speech.speak(err, { language: 'ko-KR' });
+      speakWithMeter(err);
     } finally {
       setAiLoading(false);
     }
