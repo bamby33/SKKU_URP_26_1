@@ -87,7 +87,7 @@ class Schedule(Base):
     __tablename__ = "schedules"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
     title = Column(String, nullable=False)              # 예: "아침 식사"
     scheduled_time = Column(String, nullable=False)     # "09:00" 형식
     days_of_week = Column(String, default="0,1,2,3,4,5,6")  # 0=월 ~ 6=일
@@ -103,7 +103,8 @@ class ScheduleLog(Base):
     __tablename__ = "schedule_logs"
 
     id = Column(Integer, primary_key=True, index=True)
-    schedule_id = Column(Integer, ForeignKey("schedules.id"))
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    schedule_id = Column(Integer, ForeignKey("schedules.id"), index=True)
     status = Column(Enum(ScheduleStatus), default=ScheduleStatus.PENDING)
     log_date = Column(DateTime, default=datetime.utcnow)
     note = Column(Text, nullable=True)
@@ -116,8 +117,8 @@ class BehaviorLog(Base):
     __tablename__ = "behavior_logs"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
-    schedule_id = Column(Integer, ForeignKey("schedules.id"), nullable=True)  # 어떤 일과 중 발생했는지
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    schedule_id = Column(Integer, ForeignKey("schedules.id"), nullable=True, index=True)
     stage = Column(Enum(FeedbackStage), nullable=False)
     trigger = Column(String, nullable=True)             # 감지 방식 (voice/gps/manual)
     decibel_level = Column(Float, nullable=True)        # 음성 데시벨
@@ -135,7 +136,7 @@ class DailyReport(Base):
     __tablename__ = "daily_reports"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
     report_date = Column(String, nullable=False)        # "YYYY-MM-DD"
     ai_summary = Column(Text, nullable=True)            # AI 3-4문장 분석
     achieved = Column(Integer, default=0)
@@ -150,7 +151,7 @@ class UserPIN(Base):
     __tablename__ = "user_pins"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
     order = Column(Integer, nullable=False)               # 1, 2, 3
     question = Column(String, nullable=False)             # "제일 좋아하는 음식은?"
     correct_answer = Column(String, nullable=False)       # "치킨"
@@ -164,7 +165,7 @@ class GuardianNotification(Base):
     __tablename__ = "guardian_notifications"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
     message = Column(String, nullable=False)
     is_read = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -175,7 +176,7 @@ class ChatMessage(Base):
     __tablename__ = "chat_messages"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
     role = Column(String, nullable=False)    # "assistant" | "user"
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)

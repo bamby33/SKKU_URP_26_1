@@ -48,6 +48,7 @@ def check_schedule(schedule_id: int, achieved: bool, note: str = None) -> dict[s
 
         status = ScheduleStatus.ACHIEVED if achieved else ScheduleStatus.MISSED
         log = ScheduleLog(
+            user_id=schedule.user_id,
             schedule_id=schedule_id,
             status=status,
             log_date=datetime.utcnow(),
