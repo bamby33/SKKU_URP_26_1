@@ -158,17 +158,6 @@ class UserPIN(Base):
     wrong_options = Column(Text, nullable=False)          # JSON 문자열
 
 
-class ScheduleChangeRequest(Base):
-    """보호자가 요청한 일과 변경 (당사자 수락 필요)"""
-    __tablename__ = "schedule_change_requests"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
-    change_type = Column(String, nullable=False)   # "today" | "week"
-    payload = Column(Text, nullable=False)          # JSON: {schedules_to_delete, schedules_to_add}
-    status = Column(String, default="pending")      # "pending" | "accepted" | "rejected"
-    created_at = Column(DateTime, default=datetime.utcnow)
-
 
 class GuardianNotification(Base):
     """보호자가 일과 수정 시 당사자에게 전달되는 알림"""
