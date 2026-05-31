@@ -5,7 +5,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
-  Modal, Alert, ActivityIndicator,
+  Modal, Alert, ActivityIndicator, TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -107,6 +107,12 @@ function TimeField({ value, onChange, label }: TimePickerProps) {
   );
 }
 
+// ── 타입 ────────────────────────────────────────────────────────────────────────
+type FixedItem = { name: string; time: string; days: number[] };
+
+const DAY_LABELS = ['월', '화', '수', '목', '금', '토', '일'];
+const FIXED_SUGGESTIONS = ['복지관', '학교/기관', '병원', '치료', '운동'];
+
 // ── 메인 컴포넌트 ──────────────────────────────────────────────────────────────
 export default function BasicScheduleScreen({ navigation, route }: Props) {
   const params = route.params;
@@ -121,11 +127,31 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
   const [medPickerVal,   setMedPickerVal]   = useState('08:00');
   const [loading,        setLoading]        = useState(false);
 
+  // 고정 일과
+  const [fixedItems,     setFixedItems]     = useState<FixedItem[]>([]);
+  const [addingFixed,    setAddingFixed]    = useState(false);
+  const [fixedName,      setFixedName]      = useState('');
+  const [fixedTime,      setFixedTime]      = useState('09:00');
+  const [fixedDays,      setFixedDays]      = useState<number[]>([]); // 빈 배열 = 매일
+
   const addMedTime = () => {
     if (!medTimes.includes(medPickerVal)) {
       setMedTimes(p => [...p, medPickerVal].sort());
     }
     setAddingMed(false);
+  };
+
+  const addFixedItem = () => {
+    if (!fixedName.trim()) return;
+    setFixedItems(prev => [...prev, { name: fixedName.trim(), time: fixedTime, days: fixedDays }]);
+    setFixedName('');
+    setFixedTime('09:00');
+    setFixedDays([]);
+    setAddingFixed(false);
+  };
+
+  const toggleFixedDay = (d: number) => {
+    setFixedDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort());
   };
 
   const handleGenerate = async () => {
@@ -135,16 +161,19 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
         name:             params.userName,
         age:              params.age,
         disability_type:  params.disabilityType,
+        disability_level: params.disabilityLevel,
         occupation:       params.occupation,
         likes:            params.likes,
         dislikes:         params.dislikes,
         daily_life:       params.dailyLife,
+        problem_notes:    params.problemNotes,
         wake_time:        wakeTime,
         sleep_time:       sleepTime,
         breakfast_time:   breakfastTime,
         lunch_time:       lunchTime,
         dinner_time:      dinnerTime,
         medication_times: medTimes,
+        fixed_schedules:  fixedItems,
       });
 
       const schedules: ScheduleParam[] = (res.data.blocks as any[]).map(b => ({
@@ -234,6 +263,94 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
           ) : (
             <TouchableOpacity style={styles.medAddBtn} onPress={() => setAddingMed(true)}>
               <Text style={styles.medAddBtnText}>+ 약 복용 시간 추가</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* 고정 일과 섹션 */}
+        <View style={styles.section}>
+          <View style={styles.medHeader}>
+            <Text style={styles.sectionTitle}>📌 고정 일과</Text>
+            <Text style={styles.medOptional}>매일 반드시 있는 것</Text>
+          </View>
+          <Text style={styles.fixedHint}>
+            복지관·학교·병원처럼 절대 빠지면 안 되는 일과를 추가하세요.{'\n'}AI가 스케줄을 조정할 때 이 항목은 건드리지 않아요.
+          </Text>
+
+          {fixedItems.map((item, i) => (
+            <View key={i} style={styles.fixedChip}>
+              <Text style={styles.fixedChipIcon}>📌</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.fixedChipName}>{item.name}</Text>
+                <Text style={styles.fixedChipSub}>
+                  {item.time} · {item.days.length === 0 ? '매일' : item.days.map(d => DAY_LABELS[d]).join('/')}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setFixedItems(prev => prev.filter((_, j) => j !== i))}>
+                <Text style={styles.medChipDel}>✕</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+
+          {addingFixed ? (
+            <View style={styles.fixedAddBox}>
+              {/* 빠른 선택 */}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  {FIXED_SUGGESTIONS.map(s => (
+                    <TouchableOpacity
+                      key={s}
+                      style={[styles.fixedSugChip, fixedName === s && styles.fixedSugChipOn]}
+                      onPress={() => setFixedName(s)}
+                    >
+                      <Text style={[styles.fixedSugText, fixedName === s && styles.fixedSugTextOn]}>{s}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </ScrollView>
+
+              {/* 이름 직접 입력 */}
+              <TextInput
+                style={styles.fixedNameInput}
+                placeholder="일과 이름 직접 입력..."
+                placeholderTextColor="#bbb"
+                value={fixedName}
+                onChangeText={setFixedName}
+              />
+
+              {/* 시간 선택 */}
+              <TimeField value={fixedTime} onChange={setFixedTime} label="시작 시간" emoji="🕐" />
+
+              {/* 요일 선택 */}
+              <Text style={styles.fixedDayLabel}>요일 선택 (미선택 = 매일)</Text>
+              <View style={styles.fixedDayRow}>
+                {DAY_LABELS.map((d, i) => (
+                  <TouchableOpacity
+                    key={i}
+                    style={[styles.dayBtn, fixedDays.includes(i) && styles.dayBtnOn]}
+                    onPress={() => toggleFixedDay(i)}
+                  >
+                    <Text style={[styles.dayBtnText, fixedDays.includes(i) && styles.dayBtnTextOn]}>{d}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <View style={styles.medAddBtns}>
+                <TouchableOpacity style={styles.medCancelBtn} onPress={() => setAddingFixed(false)}>
+                  <Text style={styles.medCancelText}>취소</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.medConfirmBtn, { backgroundColor: colors.primary }]}
+                  onPress={addFixedItem}
+                  disabled={!fixedName.trim()}
+                >
+                  <Text style={styles.medConfirmText}>추가</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <TouchableOpacity style={styles.medAddBtn} onPress={() => setAddingFixed(true)}>
+              <Text style={styles.medAddBtnText}>+ 고정 일과 추가</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -368,6 +485,42 @@ const styles = StyleSheet.create({
     borderWidth: 2, borderColor: colors.border, borderStyle: 'dashed', alignItems: 'center',
   },
   medAddBtnText: { fontSize: 14, fontWeight: '700', color: '#aaa' },
+
+  // 고정 일과
+  fixedHint: { fontSize: 12, color: '#888', lineHeight: 18 },
+  fixedChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: '#F0F4FF', borderRadius: 12,
+    paddingHorizontal: 14, paddingVertical: 10,
+    borderWidth: 1.5, borderColor: '#C7D2F5',
+  },
+  fixedChipIcon: { fontSize: 16 },
+  fixedChipName: { fontSize: 14, fontWeight: '700', color: colors.primary },
+  fixedChipSub:  { fontSize: 12, color: '#888', marginTop: 2 },
+  fixedAddBox: { gap: 10 },
+  fixedNameInput: {
+    backgroundColor: '#F4FAF7', borderRadius: 12,
+    borderWidth: 1.5, borderColor: colors.border,
+    paddingHorizontal: 14, paddingVertical: 10,
+    fontSize: 14, color: colors.text,
+  },
+  fixedDayLabel: { fontSize: 12, fontWeight: '700', color: '#888' },
+  fixedDayRow: { flexDirection: 'row', gap: 6 },
+  dayBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#F4FAF7', borderWidth: 1.5, borderColor: colors.border,
+  },
+  dayBtnOn: { backgroundColor: colors.primary, borderColor: colors.primary },
+  dayBtnText: { fontSize: 12, fontWeight: '700', color: colors.primary },
+  dayBtnTextOn: { color: '#fff' },
+  fixedSugChip: {
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16,
+    backgroundColor: '#F4FAF7', borderWidth: 1.5, borderColor: colors.border,
+  },
+  fixedSugChipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
+  fixedSugText: { fontSize: 12, fontWeight: '600', color: colors.primary },
+  fixedSugTextOn: { color: '#fff' },
 
   // Bottom buttons
   generateBtn: {

@@ -43,10 +43,6 @@ TOOL_DEFINITION = {
         "parameters": {
             "type": "object",
             "properties": {
-                "user_id": {
-                    "type": "integer",
-                    "description": "사용자 ID"
-                },
                 "message_type": {
                     "type": "string",
                     "enum": ["daily_report", "schedule_achieved", "schedule_missed", "emergency"],
@@ -63,7 +59,7 @@ TOOL_DEFINITION = {
                     "description": "추가 정보 (선택, 예: 스케줄 이름, 메모)"
                 }
             },
-            "required": ["user_id", "message_type"]
+            "required": ["message_type"]
         }
     }
 }

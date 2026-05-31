@@ -10,6 +10,7 @@ import AccountSetupScreen from '../screens/onboarding/AccountSetupScreen';
 import PINSetupScreen from '../screens/onboarding/PINSetupScreen';
 import WelcomeScreen from '../screens/onboarding/WelcomeScreen';
 import PINLoginScreen from '../screens/auth/PINLoginScreen';
+
 import ScheduleScreen from '../screens/user/ScheduleScreen';
 import FeedbackScreen from '../screens/user/FeedbackScreen';
 import EmergencyScreen from '../screens/user/EmergencyScreen';
@@ -18,12 +19,6 @@ import AIChatScreen from '../screens/user/AIChatScreen';
 import TodayScheduleEditScreen from '../screens/user/TodayScheduleEditScreen';
 import WeekScheduleEditScreen from '../screens/user/WeekScheduleEditScreen';
 
-export type PINItem = {
-  order: number;
-  question: string;
-  correct_answer: string;
-  correct_emoji: string;
-};
 
 export type ScheduleParam = {
   day: number;       // 0=월 … 6=일
@@ -67,12 +62,12 @@ export type RootStackParamList = {
   ScheduleSetup: SignupBase;
   AccountSetup: SignupBase;
   PINSetup: AccountInfo;
-  Welcome: AccountInfo & { pins: PINItem[] };
+  Welcome: AccountInfo & { pin: string };
   Schedule: { justAchieved?: boolean; achieveRate?: number; behaviorResolved?: boolean } | undefined;
   Feedback: { scheduleId: number; achieved: boolean; title: string };
   Emergency: { stage?: 'stage_1' | 'stage_2' | 'stage_3' };
   GuardianReport: undefined;
-  AIChat: { followUpSchedule?: string; followUpId?: number; behaviorAlert?: boolean; behaviorFollowup?: boolean } | undefined;
+  AIChat: { followUpSchedule?: string; followUpId?: number; behaviorAlert?: boolean; behaviorStage1?: boolean; behaviorFollowup?: boolean } | undefined;
   TodayScheduleEdit: undefined;
   WeekScheduleEdit: undefined;
 };

@@ -236,8 +236,8 @@ export default function ScheduleScreen({ navigation, route }: Props) {
   }, []);
 
   // ── 데시벨 모니터링 ────────────────────────────────────────────────────────
-  const DB_STAGE2 = 70;
-  const DB_STAGE1 = 55;
+  const DB_STAGE2 = 85;
+  const DB_STAGE1 = 70;
 
   // 알림/AI 대화 후 1분간 dB 측정
   const METER_DURATION = 60000; // 1분
@@ -277,14 +277,9 @@ export default function ScheduleScreen({ navigation, route }: Props) {
           const now = Date.now();
           if (now - lastApiCallRef.current > 30000) {
             lastApiCallRef.current = now;
-            const uid = userIdRef.current;
-            if (uid) {
-              api.post('/chat/', {
-                user_id: uid,
-                message: '(알림 중 반응 감지)',
-                context: { decibel: approxDB },
-              }).catch(() => {});
-            }
+            await stopMetering();
+            setPending(null);
+            navigation.navigate('AIChat', { behaviorStage1: true });
           }
         }
       }, 500);

@@ -119,6 +119,7 @@ export default function AIChatScreen({ navigation, route }: Props) {
   const behaviorRecRef     = useRef<import('expo-av').Audio.Recording | null>(null);
   const behaviorMeterRef   = useRef<ReturnType<typeof setInterval> | null>(null);
   const meterStopTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const currentDbRef       = useRef<number>(0);
   const calmCountRef       = useRef(0); // 기준 이하 연속 횟수
   const DB_CALM = 55; // 이 값 이하로 지속되면 진정으로 판단
   const METER_DURATION = 60000; // 음성 종료 후 1분
@@ -145,10 +146,16 @@ export default function AIChatScreen({ navigation, route }: Props) {
       const isBehavior  = route.params?.behaviorAlert;
       const isFollowup  = route.params?.behaviorFollowup;
 
+      const isStage1 = route.params?.behaviorStage1;
+
       if (followUp) {
         const msg = `${followUp} 하셨나요? 😊`;
         setMessages([{ id: 0, role: 'assistant', content: msg }]);
         setFollowupPhase('ask');
+        speakWithMeter(msg);
+      } else if (isStage1) {
+        const msg = '지금 힘드세요? 😊 무엇이든 이야기해줘도 돼요';
+        setMessages([{ id: 0, role: 'assistant', content: msg }]);
         speakWithMeter(msg);
       } else if (isBehavior) {
         const msg = '무슨 일이에요? 😊 괜찮아요, 저한테 이야기해줘도 돼요';
@@ -230,6 +237,7 @@ export default function AIChatScreen({ navigation, route }: Props) {
           const s = await recording.getStatusAsync();
           if (!s.isRecording) return;
           const approxDB = (s.metering ?? -160) + 100;
+          currentDbRef.current = approxDB;
 
           // behaviorAlert 모드: 진정 감지 → 자동 복귀
           if (route.params?.behaviorAlert) {
@@ -302,11 +310,13 @@ export default function AIChatScreen({ navigation, route }: Props) {
     }
 
     try {
-      // behaviorAlert 모드: 첫 응답에 stage_2 컨텍스트 명시
-      const chatContext = route.params?.behaviorAlert
-        ? { behavior_stage: 'stage_2' }
-        : undefined;
-      const res = await sendChat(userId, text, chatContext);
+      // 현재 dB + 행동 초기 진입 여부를 함께 전송 → 백엔드에서 text+dB 조합 판단
+      const currentDb = currentDbRef.current;
+      const chatContext: Record<string, unknown> = {};
+      if (currentDb > 0) chatContext.decibel = currentDb;
+      if (route.params?.behaviorAlert) chatContext.behavior_stage = 'stage_2';
+      else if (route.params?.behaviorStage1) chatContext.behavior_stage = 'stage_1';
+      const res = await sendChat(userId, text, Object.keys(chatContext).length ? chatContext : undefined);
       const { reply, stage, feedback } = res.data;
       if (reply) {
         const newMsg: Message = { id: Date.now() + 1, role: 'assistant', content: reply };

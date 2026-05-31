@@ -20,10 +20,6 @@ TOOL_DEFINITION = {
         "parameters": {
             "type": "object",
             "properties": {
-                "user_id": {
-                    "type": "integer",
-                    "description": "사용자 ID"
-                },
                 "stage": {
                     "type": "string",
                     "enum": ["stage_1", "stage_2", "stage_3"],
@@ -43,7 +39,7 @@ TOOL_DEFINITION = {
                     "description": "현재 수행 중인 스케줄 이름 (선택)"
                 }
             },
-            "required": ["user_id", "stage"]
+            "required": ["stage"]
         }
     }
 }

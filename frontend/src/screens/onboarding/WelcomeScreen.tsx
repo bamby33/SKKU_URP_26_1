@@ -22,7 +22,7 @@ type Props = {
 export default function WelcomeScreen({ navigation, route }: Props) {
   const {
     userName, guardianName, guardianPhone,
-    username, password, pins, schedules, themeColor,
+    username, password, pin, schedules, themeColor,
     disabilityType, disabilityLevel, occupation, likes, dislikes, problemNotes,
   } = route.params;
 
@@ -99,7 +99,7 @@ export default function WelcomeScreen({ navigation, route }: Props) {
       await AsyncStorage.setItem('theme_color', themeColor ?? '#3B4A6B');
 
       // 2. PIN 설정
-      await api.post(`/users/${userId}/pins`, pins);
+      await api.post(`/users/${userId}/pins`, { pin });
 
       // 3. 스케줄 저장
       for (const s of schedules) {

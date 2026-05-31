@@ -1,10 +1,10 @@
 import axios from 'axios';
 
-const BASE_URL = 'http://localhost:8000';
+const BASE_URL = 'https://subsection-contacted-florist-state.trycloudflare.com';
 
 export const api = axios.create({
   baseURL: BASE_URL,
-  timeout: 60000,
+  timeout: 900000,
   headers: { 'Content-Type': 'application/json' },
 });
 

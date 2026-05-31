@@ -135,72 +135,49 @@ def user_biometric_verify(user_id: int, db: Session = Depends(get_db)):
     return LoginResponse(user_id=user.id, name=user.name, role="user")
 
 
-# ── 취향 PIN ────────────────────────────────────────────────────────────────────
+# ── 숫자 PIN ────────────────────────────────────────────────────────────────────
 
-class PINItemSchema(BaseModel):
-    order: int
-    question: str
-    correct_answer: str
-    correct_emoji: str
+class PINSetupRequest(BaseModel):
+    pin: str  # 4자리 숫자
 
 
 class PINLoginRequest(BaseModel):
-    food: str
-    animal: str
-    color: str
+    user_id: int
+    pin: str
 
 
 @router.post("/pin-login")
 def pin_login(data: PINLoginRequest, db: Session = Depends(get_db)):
-    """당사자 취향 3가지(음식/동물/색깔) 조합으로 로그인"""
-    # order=1(음식) 정답이 일치하는 user_id 목록
-    candidates = (
-        db.query(UserPIN.user_id)
-        .filter(UserPIN.order == 1, UserPIN.correct_answer == data.food)
-        .all()
-    )
-    user_ids = [r.user_id for r in candidates]
+    """당사자 4자리 숫자 PIN 로그인"""
+    user = db.query(User).filter(User.id == data.user_id).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="사용자를 찾을 수 없습니다.")
 
-    if not user_ids:
-        raise HTTPException(status_code=401, detail="일치하는 정보가 없어요.")
+    record = db.query(UserPIN).filter(UserPIN.user_id == data.user_id, UserPIN.order == 1).first()
+    if not record or not pwd_context.verify(data.pin, record.correct_answer):
+        raise HTTPException(status_code=401, detail="PIN이 올바르지 않아요.")
 
-    # 음식/동물/색깔 모두 일치하는 user_id 찾기
-    answers = {1: data.food, 2: data.animal, 3: data.color}
-    matched_user_id = None
-
-    for uid in user_ids:
-        pins = db.query(UserPIN).filter(UserPIN.user_id == uid).all()
-        pin_map = {p.order: p.correct_answer for p in pins}
-        if all(pin_map.get(order) == answer for order, answer in answers.items()):
-            matched_user_id = uid
-            break
-
-    if matched_user_id is None:
-        raise HTTPException(status_code=401, detail="일치하는 정보가 없어요.")
-
-    user = db.query(User).filter(User.id == matched_user_id).first()
     return {"user_id": user.id, "name": user.name}
 
 
 @router.post("/{user_id}/pins")
-def setup_pins(user_id: int, pins: list[PINItemSchema], db: Session = Depends(get_db)):
-    """보호자가 당사자의 취향 PIN 3문제 등록"""
+def setup_pins(user_id: int, data: PINSetupRequest, db: Session = Depends(get_db)):
+    """보호자가 당사자의 4자리 숫자 PIN 등록"""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
 
-    # 기존 PIN 삭제 후 재등록
-    db.query(UserPIN).filter(UserPIN.user_id == user_id).delete()
+    if not data.pin.isdigit() or len(data.pin) != 4:
+        raise HTTPException(status_code=400, detail="4자리 숫자를 입력해주세요.")
 
-    for item in pins:
-        pin = UserPIN(
-            user_id=user_id,
-            order=item.order,
-            question=item.question,
-            correct_answer=item.correct_answer,
-            correct_emoji=item.correct_emoji,
-            wrong_options='[]',
-        )
-        db.add(pin)
+    db.query(UserPIN).filter(UserPIN.user_id == user_id).delete()
+    db.add(UserPIN(
+        user_id=user_id,
+        order=1,
+        question="pin",
+        correct_answer=pwd_context.hash(data.pin),
+        correct_emoji="🔢",
+        wrong_options="[]",
+    ))
     db.commit()
     return {"message": "PIN 설정 완료"}

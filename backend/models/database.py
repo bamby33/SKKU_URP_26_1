@@ -92,6 +92,7 @@ class Schedule(Base):
     scheduled_time = Column(String, nullable=False)     # "09:00" 형식
     days_of_week = Column(String, default="0,1,2,3,4,5,6")  # 0=월 ~ 6=일
     is_active = Column(Boolean, default=True)
+    is_fixed = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="schedules")

@@ -4,9 +4,10 @@ import os
 import logging
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from groq import Groq
+from openai import OpenAI
 from dotenv import load_dotenv
 from models.database import get_db, User, Schedule, ScheduleLog, ScheduleStatus, BehaviorLog, FeedbackStage
 from datetime import datetime, timedelta
@@ -153,15 +154,15 @@ def suggest_schedule(user_id: int, db: Session = Depends(get_db)):
 """
 
     try:
-        groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        groq_client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=os.getenv("GROQ_API_KEY"))
         response = groq_client.chat.completions.create(
-            model=os.getenv("GROQ_SCHEDULE_MODEL", "llama-3.1-8b-instant"),
+            model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=4096,
         )
         raw = response.choices[0].message.content or ""
     except Exception as e:
-        logger.error(f"Groq API error: {e}")
+        logger.error(f"LLM API error: {e}")
         raise HTTPException(status_code=503, detail=f"AI 서비스 오류: {str(e)}")
 
     try:
@@ -324,36 +325,48 @@ def update_tomorrow_schedule(data: TomorrowNoteRequest, db: Session = Depends(ge
 
 # ── 회원가입 중 사용 (user_id 없음) ───────────────────────────────────────────
 
+class FixedScheduleItem(BaseModel):
+    name: str
+    time: str        # "HH:MM"
+    days: list[int]  # 0=월~6=일, 빈 리스트=매일
+
+
 class OnboardingRequest(BaseModel):
     name: str
     age: str = ""
     gender: str = ""
     disability_type: str
+    disability_level: str = ""
     occupation: str = ""
     likes: list[str] = []
     dislikes: list[str] = []
     daily_life: str = ""
+    problem_notes: str = ""
     wake_time: str = ""
     sleep_time: str = ""
     breakfast_time: str = ""
     lunch_time: str = ""
     dinner_time: str = ""
     medication_times: list[str] = []
+    fixed_schedules: list[FixedScheduleItem] = []
 
 
 @router.post("/suggest-schedule-onboarding")
 def suggest_schedule_onboarding(data: OnboardingRequest):
     """회원가입 시 인적사항 기반 AI 시간표 추천 (user_id 불필요)"""
     disability_map = {"intellectual": "지적장애", "autism": "자폐스펙트럼장애"}
+    level_map = {"mild": "경도 (혼자 할 수 있음)", "moderate": "중도 (도움 필요)", "severe": "고도 (많은 도움 필요)"}
     gender_map = {"male": "남성", "female": "여성"}
 
     disability = disability_map.get(data.disability_type, data.disability_type)
+    level = level_map.get(data.disability_level, data.disability_level) if data.disability_level else "미입력"
     gender = gender_map.get(data.gender, data.gender)
     likes_str = ", ".join(data.likes) if data.likes else "없음"
     dislikes_str = ", ".join(data.dislikes) if data.dislikes else "없음"
     occupation_str = data.occupation if data.occupation else "없음"
     age_str = f"{data.age}세" if data.age else "나이 미입력"
     daily_life_str = data.daily_life if data.daily_life else "없음"
+    problem_notes_str = data.problem_notes if data.problem_notes else "없음"
 
     schedule_lines = []
     if data.wake_time:
@@ -370,92 +383,95 @@ def suggest_schedule_onboarding(data: OnboardingRequest):
         schedule_lines.append(f"  - 취침 시간: {data.sleep_time} (취침 준비는 이 시간 1시간 전부터 시작, 이 시간이 취침 블록의 종료 시간)")
     schedule_str = "\n".join(schedule_lines) if schedule_lines else "  - 별도 지정 없음"
 
-    prompt = f"""다음 발달장애인을 위한 일주일 생활 시간표를 추천해주세요.
+    # 고정 일과 텍스트 생성
+    DAY_KO = ["월", "화", "수", "목", "금", "토", "일"]
+    fixed_lines = []
+    for fs in data.fixed_schedules:
+        day_str = "매일" if not fs.days else "/".join(DAY_KO[d] for d in sorted(fs.days))
+        fixed_lines.append(f"  - {fs.name}: {fs.time} ({day_str})")
+    fixed_str = "\n".join(fixed_lines) if fixed_lines else "  - 없음"
 
-사용자 정보:
-- 이름: {data.name}
-- 나이: {age_str}
-- 성별: {gender}
-- 장애 유형: {disability}
-- 하는 일: {occupation_str}
-- 좋아하는 것: {likes_str}
-- 싫어하는 것 / 힘든 것: {dislikes_str}
-- 취미 및 일상: {daily_life_str}
+    # 장애 유형×정도별 스케줄 설계 원칙
+    if data.disability_type == "intellectual" and data.disability_level == "mild":
+        design_rule = "블록당 30~60분, 하루 8~10개, 자유시간 2개 이상 포함"
+    elif data.disability_type == "intellectual" and data.disability_level == "moderate":
+        design_rule = "블록당 20~40분, 하루 6~8개, 활동 사이 10분 휴식 블록 필수, 단순하고 익숙한 루틴 중심"
+    elif data.disability_type == "autism" and data.disability_level == "mild":
+        design_rule = "블록당 30~60분, 예측 가능한 순서 유지, 갑작스러운 전환 최소화, 같은 패턴 반복"
+    elif data.disability_type == "autism":
+        design_rule = "블록당 20~30분, 하루 5~7개, 동일 시간 동일 활동 반복, 감각 자극 강한 활동 금지"
+    else:
+        design_rule = "블록당 30~60분, 하루 8개 내외, 규칙적이고 예측 가능한 루틴"
 
-기본 시간 정보 (반드시 이 시간을 기준으로 시간표를 구성하세요):
-{schedule_str}
+    base_info = f"""당사자: {data.name}({age_str}, {gender}), {disability} {level}
+하는 일: {occupation_str} / 좋아함: {likes_str} / 힘듦: {dislikes_str}
+기본 시간: {schedule_str}
+고정 일과: {fixed_str}
+설계 원칙: {design_rule}"""
 
-요구사항:
-- 발달장애인에게 적합한 규칙적이고 예측 가능한 시간표
-- 반복되는 일상 루틴 강조 (기상, 식사, 취침 등)
-- 위의 기본 시간 정보를 정확하게 반영하세요 (기상·취침·식사 시간 준수)
-- 기상·아침 식사·점심 식사·저녁 식사·취침 시간은 매일(월~일) 반복되는 고정 일과이므로 모든 요일에 빠짐없이 포함하세요
-- 약 복용 시간이 있다면 반드시 포함하세요
-- 하는 일(직장/시설/학교 등)이 있다면 주중 스케줄에 반영
-- 좋아하는 활동과 취미를 여가 시간에 반영
-- 싫어하는 것은 피하거나 최소화
-- 주중(월~금)과 주말(토~일) 패턴 구분
-- 하루 8~10개 항목
-
-아래 JSON 배열 형식으로만 응답하세요. 다른 설명은 절대 포함하지 마세요:
-[
-  {{"day": 0, "start": "07:00", "end": "07:30", "name": "기상·세면", "emoji": "🌅", "color": "#FFB74D"}},
-  ...
-]
-
-규칙:
-- day: 0=월 1=화 2=수 3=목 4=금 5=토 6=일
-- start/end: "HH:MM" 형식, 06:00~22:00 범위
-- emoji: 일과를 가장 잘 표현하는 이모지 하나
-- color: 반드시 이 중 하나 선택 "#FFB74D" "#4CAF7D" "#AB77E8" "#6B9BF2" "#5BB7C0" "#E57373" "#26C6DA" "#AED581" "#FF8A65"
-"""
-
-    try:
-        groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-        response = groq_client.chat.completions.create(
-            model=os.getenv("GROQ_SCHEDULE_MODEL", "llama-3.1-8b-instant"),
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=4096,
-        )
-        raw = response.choices[0].message.content or ""
-    except Exception as e:
-        logger.error(f"Groq API error (onboarding): {e}")
-        raise HTTPException(status_code=503, detail=f"AI 서비스 오류: {str(e)}")
-
-    try:
-        cleaned = _clean_json(raw)
-        items = json.loads(cleaned)
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON parse error (onboarding): {e}\nRaw: {raw[:500]}")
-        raise HTTPException(status_code=500, detail="AI 응답을 파싱하지 못했어요. 다시 시도해주세요.")
-
+    DAY_NAMES = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
     valid_colors = {
         "#FFB74D", "#4CAF7D", "#AB77E8", "#6B9BF2",
         "#5BB7C0", "#E57373", "#26C6DA", "#AED581", "#FF8A65",
     }
 
-    blocks = []
-    for item in items:
-        try:
-            ss = _to_slot(item["start"])
-            es = _to_slot(item["end"])
-            if ss < 0 or ss >= TOTAL_SLOTS or es <= ss:
-                continue
-            color = item.get("color", "#4CAF7D")
-            if color not in valid_colors:
-                color = "#4CAF7D"
-            blocks.append({
-                "day": int(item["day"]),
-                "startSlot": ss,
-                "endSlot": min(es, TOTAL_SLOTS),
-                "name": item["name"],
-                "emoji": item.get("emoji", "📋"),
-                "color": color,
-            })
-        except (KeyError, ValueError):
-            continue
+    groq_client = OpenAI(
+        base_url="https://api.groq.com/openai/v1",
+        api_key=os.getenv("GROQ_API_KEY"),
+    )
+    all_blocks = []
 
-    if not blocks:
+    def generate_day(day_idx: int) -> list:
+        day_name = DAY_NAMES[day_idx]
+        day_type = "주말" if day_idx >= 5 else "주중"
+        prompt = f"""{base_info}
+
+위 정보를 바탕으로 {day_name}({day_type}) 하루 시간표만 JSON으로 만들어주세요.
+JSON 배열만 출력하세요. 설명 없이:
+[
+  {{"day": {day_idx}, "start": "07:00", "end": "07:30", "name": "기상·세면", "emoji": "🌅", "color": "#FFB74D"}},
+  ...
+]
+규칙: start/end는 HH:MM(06:00~22:00), color는 "#FFB74D" "#4CAF7D" "#AB77E8" "#6B9BF2" "#5BB7C0" "#E57373" "#26C6DA" "#AED581" "#FF8A65" 중 하나."""
+        try:
+            response = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=2000,
+            )
+            raw = response.choices[0].message.content or ""
+            items = json.loads(_clean_json(raw))
+            blocks = []
+            for item in items:
+                try:
+                    ss = _to_slot(item["start"])
+                    es = _to_slot(item["end"])
+                    if ss < 0 or ss >= TOTAL_SLOTS or es <= ss:
+                        continue
+                    color = item.get("color", "#4CAF7D")
+                    if color not in valid_colors:
+                        color = "#4CAF7D"
+                    blocks.append({
+                        "day": day_idx,
+                        "startSlot": ss,
+                        "endSlot": min(es, TOTAL_SLOTS),
+                        "name": item["name"],
+                        "emoji": item.get("emoji", "📋"),
+                        "color": color,
+                    })
+                except (KeyError, ValueError):
+                    continue
+            return blocks
+        except Exception as e:
+            logger.error(f"LLM error day {day_idx}: {e}")
+            return []
+
+    with ThreadPoolExecutor(max_workers=7) as executor:
+        futures = {executor.submit(generate_day, i): i for i in range(7)}
+        for future in as_completed(futures):
+            all_blocks.extend(future.result())
+
+    if not all_blocks:
         raise HTTPException(status_code=500, detail="AI가 유효한 시간표를 생성하지 못했어요. 다시 시도해주세요.")
 
-    return {"blocks": blocks}
+    return {"blocks": all_blocks}

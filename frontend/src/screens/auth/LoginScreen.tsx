@@ -1,6 +1,8 @@
 /**
  * 로그인 화면
- * 보호자: 아이디/비밀번호 | 당사자: 얼굴인식(생체인식)
+ * 1) 당사자 / 보호자 선택
+ * 2) 선택 즉시 Face ID 시도
+ * 3) 실패 시 → 당사자: PIN 입력 / 보호자: 아이디·비번
  */
 import React, { useState } from 'react';
 import {
@@ -10,6 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as LocalAuthentication from 'expo-local-authentication';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
 import { api } from '../../api/client';
@@ -18,20 +21,49 @@ type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Login'>;
 };
 
-type Tab = 'user' | 'guardian';
+type Role = 'user' | 'guardian';
+type Step = 'select' | 'greeting' | 'fallback';
 
 export default function LoginScreen({ navigation }: Props) {
-  const [tab, setTab] = useState<Tab>('user');
+  const [role, setRole] = useState<Role | null>(null);
+  const [step, setStep] = useState<Step>('select');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const handleUserLogin = () => {
-    navigation.navigate('PINLogin');
+  const tryFaceID = async (selectedRole: Role) => {
+    setRole(selectedRole);
+    setStep('greeting');
+
+    const [hasHardware, isEnrolled] = await Promise.all([
+      LocalAuthentication.hasHardwareAsync(),
+      LocalAuthentication.isEnrolledAsync(),
+    ]);
+
+    if (!hasHardware || !isEnrolled) {
+      setStep('fallback');
+      return;
+    }
+
+    const result = await LocalAuthentication.authenticateAsync({
+      promptMessage: '얼굴 인식으로 로그인',
+      cancelLabel: '취소',
+    });
+
+    if (result.success) {
+      if (selectedRole === 'user') {
+        await AsyncStorage.setItem('role', 'user');
+        navigation.reset({ index: 0, routes: [{ name: 'Schedule' }] });
+      } else {
+        await AsyncStorage.setItem('role', 'guardian');
+        navigation.reset({ index: 0, routes: [{ name: 'GuardianReport' }] });
+      }
+    } else {
+      setStep('fallback');
+    }
   };
 
-  // ── 보호자: 아이디/비밀번호 로그인 ──────────────────────────────────────────
   const handleGuardianLogin = async () => {
     if (!username.trim() || !password) return;
     setLoading(true);
@@ -51,71 +83,80 @@ export default function LoginScreen({ navigation }: Props) {
     }
   };
 
+  const handleBack = () => {
+    if (step === 'fallback') {
+      setStep('select');
+      setRole(null);
+    } else {
+      navigation.goBack();
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
 
-          {/* 헤더 */}
           <View style={styles.header}>
-            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+            <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
               <Text style={styles.backText}>← 뒤로</Text>
             </TouchableOpacity>
           </View>
 
-          {/* 타이틀 */}
-          <View style={styles.titleArea}>
-            <Text style={styles.titleEmoji}>👋</Text>
-            <Text style={styles.title}>다시 만나요!</Text>
-          </View>
-
-          {/* 탭 */}
-          <View style={styles.tabRow}>
-            <TouchableOpacity
-              style={[styles.tab, tab === 'user' && styles.tabActive]}
-              onPress={() => setTab('user')}
-            >
-              <Text style={[styles.tabText, tab === 'user' && styles.tabTextActive]}>
-                😊 당사자
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.tab, tab === 'guardian' && styles.tabActiveGuardian]}
-              onPress={() => setTab('guardian')}
-            >
-              <Text style={[styles.tabText, tab === 'guardian' && styles.tabTextActive]}>
-                👨‍👩‍👧 보호자
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* 당사자 탭 */}
-          {tab === 'user' && (
-            <View style={styles.biometricArea}>
-              <View style={styles.biometricCard}>
-                <Text style={styles.biometricEmoji}>🎯</Text>
-                <Text style={styles.biometricTitle}>좋아하는 걸로 로그인</Text>
-                <Text style={styles.biometricDesc}>
-                  보호자가 설정한{'\n'}취향 문제 3개를 맞추면 로그인돼요
-                </Text>
-                <TouchableOpacity
-                  style={styles.biometricBtn}
-                  onPress={handleUserLogin}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.biometricBtnIcon}>🍗</Text>
-                  <Text style={styles.biometricBtnText}>취향 선택으로 로그인</Text>
-                </TouchableOpacity>
-              </View>
-              <Text style={styles.biometricHint}>
-                처음 사용하신다면 보호자가 먼저 회원가입을 해주세요
-              </Text>
+          {/* 인사 (당사자/보호자 탭 후 Face ID 시도 중) */}
+          {step === 'greeting' && (
+            <View style={styles.greetingArea}>
+              <Text style={styles.greetingEmoji}>{role === 'user' ? '😊' : '👨‍👩‍👧'}</Text>
+              <Text style={styles.greetingText}>안녕하세요!</Text>
             </View>
           )}
 
-          {/* 보호자 탭 */}
-          {tab === 'guardian' && (
+          {/* 역할 선택 */}
+          {step === 'select' && (
+            <View style={styles.roleArea}>
+              <TouchableOpacity
+                style={styles.roleCard}
+                onPress={() => tryFaceID('user')}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.roleEmoji}>😊</Text>
+                <Text style={styles.roleTitle}>당사자</Text>
+                <Text style={styles.roleDesc}>Face ID로 로그인</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.roleCard, styles.roleCardGuardian]}
+                onPress={() => tryFaceID('guardian')}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.roleEmoji}>👨‍👩‍👧</Text>
+                <Text style={[styles.roleTitle, styles.roleTitleGuardian]}>보호자</Text>
+                <Text style={styles.roleDesc}>Face ID로 로그인</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* 폴백 — 당사자: PIN */}
+          {step === 'fallback' && role === 'user' && (
+            <View style={styles.fallbackArea}>
+              <Text style={styles.fallbackTitle}>Face ID를 사용할 수 없어요</Text>
+              <Text style={styles.fallbackDesc}>PIN 번호로 로그인해주세요</Text>
+              <TouchableOpacity
+                style={styles.pinBtn}
+                onPress={() => navigation.navigate('PINLogin')}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.pinBtnText}>🔢  PIN 입력하기</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* 폴백 — 보호자: 아이디/비밀번호 */}
+          {step === 'fallback' && role === 'guardian' && (
             <View style={styles.guardianArea}>
+              <Text style={styles.fallbackTitle}>Face ID를 사용할 수 없어요</Text>
+              <Text style={styles.fallbackDesc}>아이디와 비밀번호로 로그인해주세요</Text>
+
               <View style={styles.fieldGroup}>
                 <Text style={styles.fieldLabel}>아이디</Text>
                 <TextInput
@@ -149,10 +190,7 @@ export default function LoginScreen({ navigation }: Props) {
               </View>
 
               <TouchableOpacity
-                style={[
-                  styles.loginBtn,
-                  (!username.trim() || !password) && styles.loginBtnDisabled,
-                ]}
+                style={[styles.loginBtn, (!username.trim() || !password) && styles.loginBtnDisabled]}
                 onPress={handleGuardianLogin}
                 disabled={!username.trim() || !password || loading}
                 activeOpacity={0.85}
@@ -165,7 +203,6 @@ export default function LoginScreen({ navigation }: Props) {
             </View>
           )}
 
-          {/* 회원가입 링크 */}
           <TouchableOpacity onPress={() => navigation.navigate('PersonInfo')} style={styles.signupLink}>
             <Text style={styles.signupLinkText}>
               아직 계정이 없으신가요?{'  '}
@@ -181,93 +218,69 @@ export default function LoginScreen({ navigation }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F4FAF7' },
-
   header: { paddingHorizontal: 20, paddingTop: 12 },
   backBtn: {
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    backgroundColor: colors.primaryBg,
-    borderRadius: 20,
+    alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 14, paddingVertical: 8,
+    backgroundColor: colors.primaryBg, borderRadius: 20,
   },
   backText: { fontSize: 15, color: colors.primary, fontWeight: '800' },
-
-  content: { padding: 24, gap: 24 },
+  content: { padding: 24, gap: 28 },
 
   titleArea: { alignItems: 'center', gap: 8 },
   titleEmoji: { fontSize: 52 },
   title: { fontSize: 28, fontWeight: '900', color: colors.primary },
 
-  tabRow: {
-    flexDirection: 'row',
-    backgroundColor: '#E4F2EA',
-    borderRadius: 16,
-    padding: 4,
-    gap: 4,
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: 11,
-    borderRadius: 13,
-    alignItems: 'center',
-  },
-  tabActive: { backgroundColor: colors.primary },
-  tabActiveGuardian: { backgroundColor: colors.guardian },
-  tabText: { fontSize: 14, fontWeight: '700', color: '#888' },
-  tabTextActive: { color: colors.white },
-
-  // 당사자 영역
-  biometricArea: { gap: 14, alignItems: 'center' },
-  biometricCard: {
+  // 역할 선택
+  roleArea: { gap: 16 },
+  roleCard: {
     backgroundColor: colors.white,
     borderRadius: 24,
     padding: 28,
     alignItems: 'center',
-    gap: 12,
-    width: '100%',
+    gap: 8,
+    borderWidth: 2,
+    borderColor: colors.border,
     elevation: 3,
     shadowColor: '#000',
     shadowOpacity: 0.07,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 3 },
   },
-  biometricEmoji: { fontSize: 64 },
-  biometricTitle: { fontSize: 18, fontWeight: '800', color: colors.primary },
-  biometricDesc: { fontSize: 13, color: '#888', textAlign: 'center', lineHeight: 20 },
-  biometricBtn: {
+  roleCardGuardian: { borderColor: colors.guardian + '44' },
+  roleEmoji: { fontSize: 52 },
+  roleTitle: { fontSize: 20, fontWeight: '900', color: colors.primary },
+  roleTitleGuardian: { color: colors.guardian },
+  roleDesc: { fontSize: 13, color: '#aaa' },
+
+  // 폴백 공통
+  fallbackArea: { alignItems: 'center', gap: 16 },
+  fallbackTitle: { fontSize: 17, fontWeight: '800', color: colors.primary, textAlign: 'center' },
+  fallbackDesc: { fontSize: 13, color: '#888', textAlign: 'center' },
+
+  // 당사자 PIN 버튼
+  pinBtn: {
     backgroundColor: colors.primary,
-    borderRadius: 16,
-    paddingVertical: 14,
-    paddingHorizontal: 32,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 4,
+    borderRadius: 18,
+    paddingVertical: 16,
+    paddingHorizontal: 40,
     elevation: 4,
     shadowColor: colors.primary,
     shadowOpacity: 0.32,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 3 },
   },
-  biometricBtnIcon: { fontSize: 20 },
-  biometricBtnText: { color: colors.white, fontWeight: '800', fontSize: 15 },
-  biometricHint: { fontSize: 12, color: '#aaa', textAlign: 'center' },
+  pinBtnText: { color: colors.white, fontWeight: '800', fontSize: 16 },
 
-  // 보호자 영역
+  // 보호자 폴백
   guardianArea: { gap: 18 },
   fieldGroup: { gap: 8 },
   fieldLabel: { fontSize: 13, fontWeight: '700', color: colors.primary },
   input: {
-    backgroundColor: colors.white,
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 16,
-    color: colors.text,
-    borderWidth: 2,
-    borderColor: colors.border,
+    backgroundColor: colors.white, borderRadius: 14,
+    paddingHorizontal: 16, paddingVertical: 14,
+    fontSize: 16, color: colors.text,
+    borderWidth: 2, borderColor: colors.border,
   },
   pwWrap: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   eyeBtn: {
@@ -276,18 +289,17 @@ const styles = StyleSheet.create({
     borderWidth: 2, borderColor: colors.border,
   },
   loginBtn: {
-    backgroundColor: colors.guardian,
-    borderRadius: 16,
-    paddingVertical: 16,
-    alignItems: 'center',
-    elevation: 4,
-    shadowColor: colors.guardian,
-    shadowOpacity: 0.32,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 3 },
+    backgroundColor: colors.guardian, borderRadius: 16, paddingVertical: 16,
+    alignItems: 'center', elevation: 4,
+    shadowColor: colors.guardian, shadowOpacity: 0.32,
+    shadowRadius: 10, shadowOffset: { width: 0, height: 3 },
   },
   loginBtnDisabled: { backgroundColor: '#A8D8C0', elevation: 0, shadowOpacity: 0 },
   loginBtnText: { color: colors.white, fontWeight: '800', fontSize: 17 },
+
+  greetingArea: { alignItems: 'center', gap: 16, paddingVertical: 40 },
+  greetingEmoji: { fontSize: 80 },
+  greetingText: { fontSize: 32, fontWeight: '900', color: colors.primary },
 
   signupLink: { alignItems: 'center' },
   signupLinkText: { fontSize: 13, color: '#aaa' },

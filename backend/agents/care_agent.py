@@ -1,16 +1,15 @@
 """
 Care Agent - 발달장애인 돌봄 에이전트 AI 핵심 로직
-- Groq (Llama 3.3 70B) 기반
-- 5개 Tool을 자율적으로 호출하며 대화 흐름 관리
+- vLLM (Llama 3.1 8B Instruct) 기반
+- 4개 Tool을 자율적으로 호출하며 대화 흐름 관리
 """
 import json
 import os
 import time
 from typing import Any, Generator
 from dotenv import load_dotenv
-from groq import Groq
+from openai import OpenAI
 
-from agents.tools.personalization import personalize_user, TOOL_DEFINITION as T1
 from agents.tools.schedule_check import check_schedule, TOOL_DEFINITION as T2
 from agents.tools.feedback import provide_feedback, TOOL_DEFINITION as T3
 from agents.tools.detect import detect_user_response, TOOL_DEFINITION as T4
@@ -18,14 +17,13 @@ from agents.tools.messaging import send_message, TOOL_DEFINITION as T5
 
 load_dotenv()
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_MODEL   = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://localhost:8001/v1")
+LLM_MODEL     = os.getenv("LLM_MODEL", "meta-llama/Meta-Llama-3.1-8B-Instruct")
 
-client = Groq(api_key=GROQ_API_KEY)
+client = OpenAI(base_url=VLLM_BASE_URL, api_key="none")
 
 # Tool 실행 함수 매핑
 TOOL_EXECUTORS: dict[str, Any] = {
-    "personalize_user":    personalize_user,
     "check_schedule":      check_schedule,
     "provide_feedback":    provide_feedback,
     "detect_user_response": detect_user_response,
@@ -33,7 +31,7 @@ TOOL_EXECUTORS: dict[str, Any] = {
 }
 
 # OpenAI 형식 Tool 정의 리스트 (Groq는 OpenAI 포맷 그대로 사용)
-TOOLS = [T1, T2, T3, T4, T5]
+TOOLS = [T2, T3, T4, T5]
 
 BASE_SYSTEM_PROMPT = """당신은 발달장애인을 돌보는 AI 돌봄 에이전트입니다.
 
@@ -212,10 +210,18 @@ def chat(
                 f"반드시 check_schedule 툴을 호출하여 DB에 기록하세요.]"
             )
         if context.get("behavior_stage"):
-            ctx_parts.append(
-                f"[행동 감지: 현재 사용자가 {context['behavior_stage']} 상태입니다. "
-                f"즉시 detect_user_response → provide_feedback(stage=\"{context['behavior_stage']}\") 순서로 호출하세요.]"
-            )
+            stage = context["behavior_stage"]
+            if stage == "stage_1":
+                ctx_parts.append(
+                    f"[행동 감지: 사용자가 사전신호(stage_1) 상태입니다. "
+                    f"detect_user_response → provide_feedback(stage=\"stage_1\") 순서로 호출하고, "
+                    f"선택지 2개와 AAC 버튼을 제시하세요.]"
+                )
+            else:
+                ctx_parts.append(
+                    f"[행동 감지: 현재 사용자가 {stage} 상태입니다. "
+                    f"즉시 detect_user_response → provide_feedback(stage=\"{stage}\") 순서로 호출하세요.]"
+                )
         if ctx_parts:
             user_content = " ".join(ctx_parts) + " " + message
 
@@ -235,7 +241,7 @@ def chat(
         for attempt in range(3):
             try:
                 response = client.chat.completions.create(
-                    model=GROQ_MODEL,
+                    model=LLM_MODEL,
                     messages=messages,
                     tools=TOOLS,
                     tool_choice="auto",
