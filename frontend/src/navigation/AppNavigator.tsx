@@ -1,4 +1,6 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { View, ActivityIndicator } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import AuthScreen from '../screens/auth/AuthScreen';
 import LoginScreen from '../screens/auth/LoginScreen';
@@ -18,6 +20,10 @@ import GuardianReportScreen from '../screens/guardian/GuardianReportScreen';
 import AIChatScreen from '../screens/user/AIChatScreen';
 import TodayScheduleEditScreen from '../screens/user/TodayScheduleEditScreen';
 import WeekScheduleEditScreen from '../screens/user/WeekScheduleEditScreen';
+import ScheduleEditScreen from '../screens/user/ScheduleEditScreen';
+import DailySummaryScreen from '../screens/user/DailySummaryScreen';
+import GuardianTomorrowScreen from '../screens/guardian/GuardianTomorrowScreen';
+import GuardianTodayScreen from '../screens/guardian/GuardianTodayScreen';
 
 
 export type ScheduleParam = {
@@ -33,6 +39,7 @@ export type ScheduleParam = {
 type SignupBase = {
   userName: string;
   age: string;
+  gender: string;
   disabilityType: string;
   disabilityLevel: string;   // 'mild' | 'moderate' | 'severe'
   occupation: string;
@@ -53,30 +60,58 @@ type AccountInfo = SignupBase & {
 
 export type RootStackParamList = {
   Auth: undefined;
-  Login: undefined;
+  Login: { role?: 'guardian' } | undefined;
   PINLogin: undefined;
   Home: undefined;
   PersonInfo: undefined;
-  Preferences: { userName: string; age: string; disabilityType: string; disabilityLevel: string; occupation: string };
+  Preferences: { userName: string; age: string; gender: string; disabilityType: string; disabilityLevel: string; occupation: string };
   BasicSchedule: Omit<SignupBase, 'schedules'>;
   ScheduleSetup: SignupBase;
   AccountSetup: SignupBase;
   PINSetup: AccountInfo;
   Welcome: AccountInfo & { pin: string };
-  Schedule: { justAchieved?: boolean; achieveRate?: number; behaviorResolved?: boolean } | undefined;
+  Schedule: { justAchieved?: boolean; achieveRate?: number; behaviorResolved?: boolean; snoozeScheduleId?: number } | undefined;
   Feedback: { scheduleId: number; achieved: boolean; title: string };
   Emergency: { stage?: 'stage_1' | 'stage_2' | 'stage_3' };
   GuardianReport: undefined;
-  AIChat: { followUpSchedule?: string; followUpId?: number; behaviorAlert?: boolean; behaviorStage1?: boolean; behaviorFollowup?: boolean } | undefined;
+  AIChat: { followUpSchedule?: string; followUpId?: number; followUpAttempt?: number; behaviorAlert?: boolean; behaviorStage1?: boolean; behaviorFollowup?: boolean } | undefined;
   TodayScheduleEdit: undefined;
   WeekScheduleEdit: undefined;
+  ScheduleEdit: undefined;
+  DailySummary: undefined;
+  GuardianTomorrow: undefined;
+  GuardianToday: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export default function AppNavigator() {
+  // 세션 복원(자동 로그인): 저장된 로그인 정보가 있으면 해당 홈으로 바로 진입
+  const [initialRoute, setInitialRoute] = useState<keyof RootStackParamList | null>(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const pairs = await AsyncStorage.multiGet(['user_id', 'role']);
+        const uid = pairs[0][1];
+        const role = pairs[1][1];
+        if (uid) setInitialRoute(role === 'guardian' ? 'GuardianReport' : 'Schedule');
+        else setInitialRoute('Auth');
+      } catch {
+        setInitialRoute('Auth');
+      }
+    })();
+  }, []);
+
+  if (!initialRoute) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F4F6FB' }}>
+        <ActivityIndicator size="large" color="#3B4A6B" />
+      </View>
+    );
+  }
+
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
+    <Stack.Navigator initialRouteName={initialRoute} screenOptions={{ headerShown: false }}>
       <Stack.Screen name="Auth" component={AuthScreen} />
       <Stack.Screen name="Login" component={LoginScreen} />
       <Stack.Screen name="PersonInfo" component={PersonInfoScreen} />
@@ -98,6 +133,10 @@ export default function AppNavigator() {
       />
       <Stack.Screen name="TodayScheduleEdit" component={TodayScheduleEditScreen} />
       <Stack.Screen name="WeekScheduleEdit" component={WeekScheduleEditScreen} />
+      <Stack.Screen name="ScheduleEdit" component={ScheduleEditScreen} />
+      <Stack.Screen name="DailySummary" component={DailySummaryScreen} options={{ animation: 'fade' }} />
+      <Stack.Screen name="GuardianTomorrow" component={GuardianTomorrowScreen} options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="GuardianToday" component={GuardianTodayScreen} options={{ animation: 'slide_from_right' }} />
     </Stack.Navigator>
   );
 }

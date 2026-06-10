@@ -84,7 +84,6 @@ export default function PINSetupScreen({ navigation, route }: Props) {
       </View>
 
       <View style={styles.content}>
-        <Text style={styles.emoji}>🔢</Text>
         <Text style={styles.title}>
           {step === 'enter' ? '당사자 PIN을\n설정해주세요' : 'PIN을\n한 번 더 입력해주세요'}
         </Text>
@@ -126,7 +125,7 @@ export default function PINSetupScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4FAF7' },
+  container: { flex: 1, backgroundColor: '#F4F6FB' },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8,

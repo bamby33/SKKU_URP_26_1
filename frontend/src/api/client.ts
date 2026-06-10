@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const BASE_URL = 'https://subsection-contacted-florist-state.trycloudflare.com';
+const BASE_URL = 'https://payroll-ozone-simpson-launched.trycloudflare.com';
 
 export const api = axios.create({
   baseURL: BASE_URL,

@@ -2,7 +2,7 @@
  * 화면 5 · 사용자
  * 문제행동 대응 (긴급) — stage 2: 흥분 상태
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, ActivityIndicator,
 } from 'react-native';
@@ -11,9 +11,12 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Speech from 'expo-speech';
+import { Audio } from 'expo-av';
+import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from 'expo-speech-recognition';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
-import { api } from '../../api/client';
+import { api, sendChat } from '../../api/client';
+import { cleanForSpeech, cleanForDisplay } from '../../utils/text';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Emergency'>;
@@ -68,9 +71,104 @@ const STAGE_CONFIG = {
 export default function EmergencyScreen({ navigation, route }: Props) {
   const stage = route.params?.stage ?? 'stage_2';
   const config = STAGE_CONFIG[stage];
-  const [listening, setListening] = useState(true);
+  const [listening, setListening] = useState(false);
   const [sending, setSending] = useState(false);
   const [calming, setCalming] = useState(false);
+  const [userId, setUserId] = useState<number | null>(null);
+  const [aiReply, setAiReply] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [selectedOpt, setSelectedOpt] = useState<number | null>(null);
+
+  const recRef        = useRef<Audio.Recording | null>(null);
+  const meterRef      = useRef<ReturnType<typeof setInterval> | null>(null);
+  const listeningRef  = useRef(false);
+  const reEscalatedRef = useRef(false);
+  const DB_REESCALATE = 95; // 재격화로 판단할 데시벨
+
+  useEffect(() => { listeningRef.current = listening; }, [listening]);
+  useEffect(() => {
+    AsyncStorage.getItem('user_id').then(v => { if (v) setUserId(Number(v)); });
+  }, []);
+
+  // ── 음성 인식(STT) ──
+  useSpeechRecognitionEvent('start', () => setListening(true));
+  useSpeechRecognitionEvent('end',   () => setListening(false));
+  useSpeechRecognitionEvent('error', () => setListening(false));
+  useSpeechRecognitionEvent('result', e => {
+    const txt = e.results[0]?.transcript ?? '';
+    if (txt && e.isFinal) handleUserSpeech(txt);
+  });
+
+  const toggleMic = async () => {
+    if (listening) { ExpoSpeechRecognitionModule.stop(); return; }
+    const { granted } = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+    if (granted) ExpoSpeechRecognitionModule.start({ lang: 'ko-KR', interimResults: false });
+  };
+
+  const speakSlow = (t: string) => {
+    const s = cleanForSpeech(t);
+    if (s) Speech.speak(s, { language: 'ko-KR', rate: 0.9 });
+  };
+
+  // 사용자가 말한 내용 → AI 응답 + 단계 전이
+  const handleUserSpeech = async (text: string) => {
+    if (!userId || aiLoading || !text.trim()) return;
+    setAiLoading(true);
+    try {
+      const res = await sendChat(userId, text, { behavior_stage: stage });
+      const { reply, stage: newStage } = res.data;
+      if (reply) { setAiReply(cleanForDisplay(reply)); speakSlow(reply); }
+      if (newStage && newStage !== stage && (newStage === 'stage_2' || newStage === 'stage_3')) {
+        setTimeout(() => navigation.replace('Emergency', { stage: newStage }), 1800);
+      }
+    } catch {
+      setAiReply('죄송해요, 잠시 후 다시 이야기해요.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  // ── 재격화 데시벨 감지 (STT 미사용 중에만) ──
+  const stopMeter = async () => {
+    if (meterRef.current) { clearInterval(meterRef.current); meterRef.current = null; }
+    if (recRef.current) { try { await recRef.current.stopAndUnloadAsync(); } catch {} recRef.current = null; }
+  };
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const { status } = await Audio.requestPermissionsAsync();
+        if (status !== 'granted' || !active) return;
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+        const { recording } = await Audio.Recording.createAsync({
+          ...Audio.RecordingOptionsPresets.HIGH_QUALITY, isMeteringEnabled: true,
+        });
+        if (!active) { try { await recording.stopAndUnloadAsync(); } catch {} return; }
+        recRef.current = recording;
+        meterRef.current = setInterval(async () => {
+          if (listeningRef.current) return; // STT 중엔 측정 건너뜀
+          const s = await recording.getStatusAsync();
+          if (!s.isRecording) return;
+          const approxDB = (s.metering ?? -160) + 100;
+          if (approxDB >= DB_REESCALATE && stage !== 'stage_2' && !reEscalatedRef.current) {
+            reEscalatedRef.current = true;
+            if (userId) {
+              api.post(`/chat/log-behavior/${userId}`, {
+                stage: 'stage_2', trigger: 'voice_reescalate', decibel: approxDB,
+              }).catch(() => {});
+            }
+            await stopMeter();
+            navigation.replace('Emergency', { stage: 'stage_2' });
+          }
+        }, 500);
+      } catch {}
+    })();
+    return () => { active = false; stopMeter(); };
+  }, [stage, userId]);
+
+  // 화면 떠날 때 음성/인식 정리
+  useEffect(() => () => { Speech.stop(); ExpoSpeechRecognitionModule.stop(); }, []);
 
   // stage 진입 시 TTS 자동 재생 (낮고 느린 속도)
   useEffect(() => {
@@ -171,31 +269,41 @@ export default function EmergencyScreen({ navigation, route }: Props) {
           {OPTIONS.map((opt, i) => (
             <TouchableOpacity
               key={i}
-              style={[styles.optCard, { backgroundColor: opt.bg }]}
-              onPress={() => Speech.speak(opt.speech, { language: 'ko-KR', rate: 0.85 })}
+              style={[styles.optCard, { backgroundColor: opt.bg }, selectedOpt === i && styles.optCardSelected]}
+              onPress={() => { setSelectedOpt(i); Speech.speak(cleanForSpeech(opt.speech), { language: 'ko-KR', rate: 0.85 }); }}
               activeOpacity={0.75}
             >
               <Text style={styles.optEmoji}>{opt.emoji}</Text>
               <Text style={styles.optText}>{opt.label}</Text>
+              {selectedOpt === i && <Text style={styles.optCheck}>✓</Text>}
             </TouchableOpacity>
           ))}
         </View>
 
-        {/* 음성 입력 */}
-        <View style={[styles.voiceRow, listening && styles.voiceRowListening]}>
-          <TouchableOpacity
-            style={[styles.micBtn, listening && styles.micBtnListening]}
-            onPress={() => setListening(!listening)}
-          >
+        {/* 음성 입력 — 탭하면 실제 음성인식 */}
+        <TouchableOpacity
+          style={[styles.voiceRow, listening && styles.voiceRowListening]}
+          onPress={toggleMic}
+          activeOpacity={0.8}
+        >
+          <View style={[styles.micBtn, listening && styles.micBtnListening]}>
             <Text style={{ fontSize: 18 }}>🎙️</Text>
-          </TouchableOpacity>
-          <View>
+          </View>
+          <View style={{ flex: 1 }}>
             <Text style={[styles.voiceLabel, listening && styles.voiceLabelListening]}>
-              {listening ? '듣고 있어요' : '지금 어떤지 말해봐요'}
+              {listening ? '듣고 있어요…' : '눌러서 말해봐요'}
             </Text>
             <Text style={styles.voiceHint}>느낌이나 원하는 걸 말해주면 도와줄게요</Text>
           </View>
-        </View>
+          {aiLoading && <ActivityIndicator color={colors.alert} />}
+        </TouchableOpacity>
+
+        {/* AI 응답 */}
+        {aiReply ? (
+          <View style={styles.aiReplyCard}>
+            <Text style={styles.aiReplyText}>{aiReply}</Text>
+          </View>
+        ) : null}
 
         {/* stage_2 전용: 진정됐어요 버튼 */}
         {stage === 'stage_2' && (
@@ -212,6 +320,17 @@ export default function EmergencyScreen({ navigation, route }: Props) {
           </TouchableOpacity>
         )}
 
+        {/* stage_3 전용: AI와 대화 연결 */}
+        {stage === 'stage_3' && (
+          <TouchableOpacity
+            style={styles.talkBtn}
+            onPress={() => navigation.navigate('AIChat', { behaviorFollowup: true })}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.talkBtnText}>💬  AI와 이야기하기</Text>
+          </TouchableOpacity>
+        )}
+
         {/* 보호자 알림 */}
         <TouchableOpacity style={styles.contactBtn} onPress={handleCallGuardian} disabled={sending}>
           {sending
@@ -225,7 +344,7 @@ export default function EmergencyScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.white },
+  container: { flex: 1, backgroundColor: '#F4F6FB' },
 
   alertHeader: {
     backgroundColor: colors.alert,
@@ -277,6 +396,19 @@ const styles = StyleSheet.create({
   },
   optEmoji: { fontSize: 28, marginBottom: 6 },
   optText: { fontSize: 12, color: '#333', fontWeight: '700', textAlign: 'center', lineHeight: 17 },
+  optCardSelected: { borderWidth: 2.5, borderColor: colors.alert },
+  optCheck: { position: 'absolute', top: 6, right: 8, fontSize: 14, fontWeight: '900', color: colors.alert },
+
+  aiReplyCard: {
+    backgroundColor: '#EEF6FF', borderRadius: 14, padding: 14,
+    borderLeftWidth: 4, borderLeftColor: colors.primary,
+  },
+  aiReplyText: { fontSize: 14, color: colors.primary, fontWeight: '600', lineHeight: 21 },
+
+  talkBtn: {
+    backgroundColor: colors.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center',
+  },
+  talkBtnText: { color: colors.white, fontWeight: '800', fontSize: 15 },
 
   voiceRow: {
     flexDirection: 'row',

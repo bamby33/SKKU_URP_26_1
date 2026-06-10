@@ -2,7 +2,7 @@
  * 온보딩 4 · 보호자 전용
  * 보호자 이름/전화번호 + 아이디/비밀번호 설정
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView,
@@ -27,19 +27,25 @@ export default function AccountSetupScreen({ navigation, route }: Props) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
-  const [showPw, setShowPw] = useState(false);
   const [usernameStatus, setUsernameStatus] = useState<'idle' | 'checking' | 'available' | 'taken'>('idle');
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const checkUsername = async (value: string) => {
-    if (value.trim().length < 4) return;
-    setUsernameStatus('checking');
-    try {
-      const res = await api.get(`/users/check-username/${value.trim()}`);
-      setUsernameStatus(res.data.available ? 'available' : 'taken');
-    } catch {
+  useEffect(() => {
+    if (username.trim().length < 4) {
       setUsernameStatus('idle');
+      return;
     }
-  };
+    setUsernameStatus('checking');
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await api.get(`/users/check-username/${username.trim()}`);
+        setUsernameStatus(res.data.available ? 'available' : 'taken');
+      } catch {
+        setUsernameStatus('idle');
+      }
+    }, 800);
+  }, [username]);
 
   const passwordMatch = password === passwordConfirm;
   const canNext =
@@ -48,7 +54,7 @@ export default function AccountSetupScreen({ navigation, route }: Props) {
     username.trim().length >= 4 &&
     password.length >= 6 &&
     passwordMatch &&
-    usernameStatus === 'available';
+    usernameStatus !== 'taken';
 
   const handleNext = () => {
     navigation.navigate('PINSetup', {
@@ -65,7 +71,6 @@ export default function AccountSetupScreen({ navigation, route }: Props) {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
 
-          {/* 헤더 */}
           <View style={styles.header}>
             <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
               <Text style={styles.backText}>← 뒤로</Text>
@@ -80,14 +85,11 @@ export default function AccountSetupScreen({ navigation, route }: Props) {
             </View>
           </View>
 
-          {/* 타이틀 */}
           <View style={styles.titleArea}>
-            <Text style={styles.emoji}>🔐</Text>
             <Text style={styles.title}>보호자 정보를{'\n'}입력해주세요</Text>
             <Text style={styles.subtitle}>로그인에 사용됩니다</Text>
           </View>
 
-          {/* 보호자 이름 */}
           <View style={styles.fieldGroup}>
             <Text style={styles.fieldLabel}>보호자 이름</Text>
             <TextInput
@@ -100,7 +102,6 @@ export default function AccountSetupScreen({ navigation, route }: Props) {
             />
           </View>
 
-          {/* 보호자 전화번호 */}
           <View style={styles.fieldGroup}>
             <Text style={styles.fieldLabel}>전화번호</Text>
             <TextInput
@@ -116,7 +117,6 @@ export default function AccountSetupScreen({ navigation, route }: Props) {
 
           <View style={styles.divider} />
 
-          {/* 아이디 */}
           <View style={styles.fieldGroup}>
             <Text style={styles.fieldLabel}>아이디</Text>
             <TextInput
@@ -128,11 +128,7 @@ export default function AccountSetupScreen({ navigation, route }: Props) {
               placeholder="영문·숫자 4자 이상"
               placeholderTextColor="#bbb"
               value={username}
-              onChangeText={(t) => {
-                setUsername(t.replace(/[^a-zA-Z0-9_]/g, ''));
-                setUsernameStatus('idle');
-              }}
-              onBlur={() => checkUsername(username)}
+              onChangeText={(t) => setUsername(t.replace(/[^a-zA-Z0-9_]/g, ''))}
               autoCapitalize="none"
               returnKeyType="next"
             />
@@ -150,26 +146,19 @@ export default function AccountSetupScreen({ navigation, route }: Props) {
             )}
           </View>
 
-          {/* 비밀번호 */}
           <View style={styles.fieldGroup}>
             <Text style={styles.fieldLabel}>비밀번호</Text>
-            <View style={styles.pwWrap}>
-              <TextInput
-                style={[styles.input, { flex: 1 }]}
-                placeholder="6자 이상"
-                placeholderTextColor="#bbb"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry={!showPw}
-                returnKeyType="next"
-              />
-              <TouchableOpacity style={styles.eyeBtn} onPress={() => setShowPw(!showPw)}>
-                <Text style={styles.eyeIcon}>{showPw ? '🙈' : '👁️'}</Text>
-              </TouchableOpacity>
-            </View>
+            <TextInput
+              style={styles.input}
+              placeholder="6자 이상"
+              placeholderTextColor="#bbb"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry={true}
+              returnKeyType="next"
+            />
           </View>
 
-          {/* 비밀번호 확인 */}
           <View style={styles.fieldGroup}>
             <Text style={styles.fieldLabel}>비밀번호 확인</Text>
             <TextInput
@@ -178,7 +167,7 @@ export default function AccountSetupScreen({ navigation, route }: Props) {
               placeholderTextColor="#bbb"
               value={passwordConfirm}
               onChangeText={setPasswordConfirm}
-              secureTextEntry={!showPw}
+              secureTextEntry={true}
               returnKeyType="done"
             />
             {passwordConfirm.length > 0 && !passwordMatch && (
@@ -189,7 +178,6 @@ export default function AccountSetupScreen({ navigation, route }: Props) {
             )}
           </View>
 
-          {/* 다음 버튼 */}
           <TouchableOpacity
             style={[styles.nextBtn, !canNext && styles.nextBtnDisabled]}
             onPress={handleNext}
@@ -206,18 +194,15 @@ export default function AccountSetupScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4FAF7' },
+  container: { flex: 1, backgroundColor: '#F4F6FB' },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8,
   },
   backBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    backgroundColor: colors.primaryBg,
-    borderRadius: 20,
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 14, paddingVertical: 8,
+    backgroundColor: colors.primaryBg, borderRadius: 20,
   },
   backText: { fontSize: 15, color: colors.primary, fontWeight: '800' },
   stepRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
@@ -228,9 +213,8 @@ const styles = StyleSheet.create({
   stepLineDone: { backgroundColor: colors.primaryLight },
 
   content: { padding: 24, gap: 20 },
-  titleArea: { alignItems: 'center', gap: 8, paddingVertical: 4 },
-  emoji: { fontSize: 52 },
-  title: { fontSize: 24, fontWeight: '900', color: colors.primary, textAlign: 'center', lineHeight: 32 },
+  titleArea: { gap: 8, paddingVertical: 4 },
+  title: { fontSize: 24, fontWeight: '900', color: colors.primary, lineHeight: 32 },
   subtitle: { fontSize: 13, color: '#888' },
 
   divider: { height: 1, backgroundColor: '#e8eef8', marginVertical: 4 },
@@ -246,13 +230,6 @@ const styles = StyleSheet.create({
   inputError: { borderColor: colors.alertLight },
   inputSuccess: { borderColor: colors.success },
   checkingText: { fontSize: 12, color: '#aaa' },
-  pwWrap: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  eyeBtn: {
-    width: 48, height: 52, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: colors.white, borderRadius: 14,
-    borderWidth: 2, borderColor: colors.border,
-  },
-  eyeIcon: { fontSize: 18 },
   errorText: { fontSize: 12, color: colors.alertLight },
   successText: { fontSize: 12, color: colors.success },
 

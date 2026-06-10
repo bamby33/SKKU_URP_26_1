@@ -23,7 +23,7 @@ const LIKE_SUGGESTIONS = ['음악 듣기', '산책', '그림 그리기', '블록
 const DISLIKE_SUGGESTIONS = ['큰 소리', '갑작스러운 변화', '낯선 장소', '긴 대기', '붐비는 곳'];
 
 export default function PreferencesScreen({ navigation, route }: Props) {
-  const { userName, age, disabilityType, disabilityLevel, occupation } = route.params;
+  const { userName, age, gender, disabilityType, disabilityLevel, occupation } = route.params;
 
   const [likes, setLikes] = useState<string[]>([]);
   const [dislikes, setDislikes] = useState<string[]>([]);
@@ -64,7 +64,7 @@ export default function PreferencesScreen({ navigation, route }: Props) {
 
   const handleNext = () => {
     navigation.navigate('BasicSchedule', {
-      userName, age, disabilityType, disabilityLevel, occupation,
+      userName, age, gender, disabilityType, disabilityLevel, occupation,
       likes, dislikes, problemNotes, dailyLife, themeColor,
     });
   };
@@ -263,7 +263,7 @@ export default function PreferencesScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4FAF7' },
+  container: { flex: 1, backgroundColor: '#F4F6FB' },
 
   header: {
     flexDirection: 'row',

@@ -4,7 +4,7 @@ Tool 2: 스케줄 달성 확인 Tool
 - 달성/미달성 결과를 반환 → 메시지 발신 Tool 또는 피드백 Tool로 연결
 """
 from models.database import SessionLocal, Schedule, ScheduleLog, ScheduleStatus
-from datetime import datetime, date
+from services.achievement import upsert_log, today_achievement
 from typing import Any
 
 
@@ -38,7 +38,7 @@ TOOL_DEFINITION = {
 }
 
 
-def check_schedule(schedule_id: int, achieved: bool, note: str = None) -> dict[str, Any]:
+def check_schedule(schedule_id: int, achieved: bool, note: str = None, is_refusal: bool = False) -> dict[str, Any]:
     """스케줄 달성 확인 및 기록"""
     db = SessionLocal()
     try:
@@ -46,33 +46,13 @@ def check_schedule(schedule_id: int, achieved: bool, note: str = None) -> dict[s
         if not schedule:
             return {"success": False, "error": f"schedule_id={schedule_id} 를 찾을 수 없습니다."}
 
-        status = ScheduleStatus.ACHIEVED if achieved else ScheduleStatus.MISSED
-        log = ScheduleLog(
-            user_id=schedule.user_id,
-            schedule_id=schedule_id,
-            status=status,
-            log_date=datetime.utcnow(),
-            note=note
-        )
-        db.add(log)
+        # 중복 방지: 오늘 그 일과 로그를 upsert (안했어요면 거부 횟수 +1)
+        log = upsert_log(schedule, achieved, note, db, count_refusal=is_refusal)
         db.commit()
+        refusal_count = log.refusal_count or 0
 
-        # 오늘 달성률 계산
-        today = date.today()
-        user_schedules = db.query(Schedule).filter(
-            Schedule.user_id == schedule.user_id,
-            Schedule.is_active == True
-        ).all()
-        schedule_ids = [s.id for s in user_schedules]
-
-        today_logs = db.query(ScheduleLog).filter(
-            ScheduleLog.schedule_id.in_(schedule_ids),
-            ScheduleLog.log_date >= datetime(today.year, today.month, today.day)
-        ).all()
-
-        achieved_count = sum(1 for l in today_logs if l.status == ScheduleStatus.ACHIEVED)
-        total_count = len(today_logs)
-        achievement_rate = round(achieved_count / total_count * 100) if total_count > 0 else 0
+        # 오늘 달성률 (단일 정의: 오늘 일과 중 최신 로그 achieved / 오늘 일과 수)
+        ach = today_achievement(schedule.user_id, db)
 
         return {
             "success": True,
@@ -81,7 +61,8 @@ def check_schedule(schedule_id: int, achieved: bool, note: str = None) -> dict[s
             "user_id": schedule.user_id,
             "achieved": achieved,
             "note": note,
-            "today_achievement_rate": achievement_rate,
+            "refusal_count": refusal_count,
+            "today_achievement_rate": ach["rate"],
             "notify_guardian": True   # 메시지 발신 Tool로 연결 신호
         }
     finally:

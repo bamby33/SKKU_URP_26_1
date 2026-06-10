@@ -161,7 +161,7 @@ export default function FeedbackScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.white },
+  container: { flex: 1, backgroundColor: '#F4F6FB' },
 
   header: {
     backgroundColor: colors.primary,

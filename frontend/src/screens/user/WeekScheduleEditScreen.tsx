@@ -22,18 +22,15 @@ type Props = {
 
 // ── 상수 ──────────────────────────────────────────────────────────────────────
 const { width: SW } = Dimensions.get('window');
-const PAD = 16;
-const TIME_W = 44;
+const PAD = 12;
+const TIME_W = 34;
 const GRID_W = SW - PAD * 2;
-const WD_COL = (GRID_W - TIME_W) / 5;
-const WE_COL = (GRID_W - TIME_W) / 2;
-const SLOT_H = 28;
+const DAY_COL = (GRID_W - TIME_W) / 7;
+const SLOT_H = 22;
 const START_H = 6;
 const TOTAL = 32; // 06:00 ~ 22:00
 
-const DAY_LABELS     = ['월', '화', '수', '목', '금', '토', '일'];
-const WEEKDAY_LABELS = ['월', '화', '수', '목', '금'];
-const WEEKEND_LABELS = ['토', '일'];
+const DAY_LABELS = ['월', '화', '수', '목', '금', '토', '일'];
 
 const PALETTE = [
   { emoji: '🚶',  label: '산책',      color: '#6B9BF2' },
@@ -116,7 +113,6 @@ export default function WeekScheduleEditScreen({ navigation }: Props) {
   const [saving,      setSaving]      = useState(false);
   const [isGuardian,  setIsGuardian]  = useState(false);
   const [storedUserId, setStoredUserId] = useState<string | null>(null);
-  const [tab,         setTab]         = useState<'weekday' | 'weekend'>('weekday');
   const [floating,    setFloating]    = useState<{ item: PaletteItem; x: number; y: number } | null>(null);
 
   const existingIdsRef = useRef<number[]>([]);
@@ -175,12 +171,11 @@ export default function WeekScheduleEditScreen({ navigation }: Props) {
   const handleDrop = (item: PaletteItem, pageX: number, pageY: number) => {
     const b = gridBounds.current;
     if (pageX < b.x || pageX > b.x + b.width || pageY < b.y || pageY > b.y + b.height) return;
-    const colW    = tab === 'weekday' ? WD_COL : WE_COL;
     const relX    = pageX - b.x - TIME_W;
     const relY    = pageY - b.y + scrollOffset.current;
-    const colIdx  = clamp(Math.floor(relX / colW), 0, tab === 'weekday' ? 4 : 1);
+    const colIdx  = clamp(Math.floor(relX / DAY_COL), 0, 6);
     const slotIdx = clamp(Math.floor(relY / SLOT_H), 0, TOTAL - 2);
-    const day     = tab === 'weekday' ? colIdx : colIdx + 5;
+    const day     = colIdx;
     setDropDay(day);
     setDropStart(toTime(slotIdx));
     setDropEnd(toTime(Math.min(slotIdx + 2, TOTAL)));
@@ -266,11 +261,6 @@ export default function WeekScheduleEditScreen({ navigation }: Props) {
 
   // ── 시간표 렌더링 ──────────────────────────────────────────────────────────
   const renderTimetable = () => {
-    const isWD         = tab === 'weekday';
-    const dayLabels    = isWD ? WEEKDAY_LABELS : WEEKEND_LABELS;
-    const colW         = isWD ? WD_COL : WE_COL;
-    const activeBlocks = blocks.filter(b => isWD ? b.day < 5 : b.day >= 5);
-
     return (
       <View
         ref={gridRef}
@@ -282,9 +272,9 @@ export default function WeekScheduleEditScreen({ navigation }: Props) {
       >
         <View style={styles.gridRow}>
           <View style={{ width: TIME_W }} />
-          {dayLabels.map((d, i) => (
-            <View key={i} style={[styles.dayHeader, { width: colW }]}>
-              <Text style={styles.dayHeaderText}>{d}</Text>
+          {DAY_LABELS.map((d, i) => (
+            <View key={i} style={[styles.dayHeader, { width: DAY_COL }, i >= 5 && styles.dayHeaderWeekend]}>
+              <Text style={[styles.dayHeaderText, i >= 5 && styles.dayHeaderTextWeekend]}>{d}</Text>
             </View>
           ))}
         </View>
@@ -297,18 +287,17 @@ export default function WeekScheduleEditScreen({ navigation }: Props) {
             return (
               <View key={slot} style={[styles.gridRow, { height: SLOT_H }]}>
                 <View style={[styles.timeCell, { width: TIME_W }]}>
-                  {isHour && <Text style={styles.timeLabel}>{`${String(h).padStart(2, '0')}:00`}</Text>}
+                  {isHour && <Text style={styles.timeLabel}>{String(h).padStart(2, '0')}</Text>}
                 </View>
-                {dayLabels.map((_, ci) => (
-                  <View key={ci} style={[styles.slotCell, { width: colW, height: SLOT_H }, isHour && styles.slotHour]} />
+                {DAY_LABELS.map((_, ci) => (
+                  <View key={ci} style={[styles.slotCell, { width: DAY_COL, height: SLOT_H }, isHour && styles.slotHour]} />
                 ))}
               </View>
             );
           })}
 
-          {activeBlocks.map(block => {
-            const colIdx = isWD ? block.day : block.day - 5;
-            const h      = (block.endSlot - block.startSlot) * SLOT_H;
+          {blocks.map(block => {
+            const h = (block.endSlot - block.startSlot) * SLOT_H;
             return (
               <TouchableOpacity
                 key={block.id}
@@ -317,15 +306,13 @@ export default function WeekScheduleEditScreen({ navigation }: Props) {
                 style={[styles.block, {
                   position: 'absolute',
                   top:    block.startSlot * SLOT_H,
-                  left:   TIME_W + colIdx * colW + 2,
-                  width:  colW - 4,
-                  height: h,
+                  left:   TIME_W + block.day * DAY_COL + 1,
+                  width:  DAY_COL - 2,
+                  height: h - 1,
                   backgroundColor: block.color + 'DD',
                 }]}
               >
                 <Text style={styles.blockEmoji}>{block.emoji}</Text>
-                {h >= 36 && <Text style={styles.blockName} numberOfLines={2}>{block.name}</Text>}
-                <Text style={styles.blockDel}>×</Text>
               </TouchableOpacity>
             );
           })}
@@ -383,21 +370,6 @@ export default function WeekScheduleEditScreen({ navigation }: Props) {
             </Text>
           </View>
         )}
-
-        {/* 탭 */}
-        <View style={styles.tabRow}>
-          {(['weekday', 'weekend'] as const).map(t => (
-            <TouchableOpacity
-              key={t}
-              style={[styles.tabBtn, tab === t && styles.tabBtnActive]}
-              onPress={() => setTab(t)}
-            >
-              <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>
-                {t === 'weekday' ? '📅 주중 (월~금)' : '🌅 주말 (토~일)'}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
 
         {/* 안내 */}
         <View style={styles.hintRow}>
@@ -576,16 +548,16 @@ const styles = StyleSheet.create({
   timeSep: { fontSize: 16, color: '#999', marginHorizontal: 6 },
 
   gridRow:       { flexDirection: 'row' },
-  dayHeader:     { alignItems: 'center', justifyContent: 'center', paddingVertical: 4 },
-  dayHeaderText: { fontSize: 12, fontWeight: '800', color: colors.primary },
-  timeCell:      { justifyContent: 'flex-start', paddingTop: 2 },
+  dayHeader:     { alignItems: 'center', justifyContent: 'center', paddingVertical: 6 },
+  dayHeaderWeekend: { backgroundColor: '#FFF3E0', borderRadius: 6 },
+  dayHeaderText: { fontSize: 13, fontWeight: '800', color: colors.primary },
+  dayHeaderTextWeekend: { color: '#E07B39' },
+  timeCell:      { justifyContent: 'flex-start', paddingTop: 1, alignItems: 'center' },
   timeLabel:     { fontSize: 10, color: '#999', fontWeight: '600' },
-  slotCell:      { borderLeftWidth: 0.5, borderBottomWidth: 0.5, borderColor: '#e0e0e0' },
-  slotHour:      { borderBottomColor: '#bbb' },
-  block:         { borderRadius: 6, padding: 3, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
-  blockEmoji:    { fontSize: 11 },
-  blockName:     { fontSize: 9, color: '#fff', fontWeight: '700', textAlign: 'center' },
-  blockDel:      { position: 'absolute', top: 1, right: 3, fontSize: 9, color: 'rgba(255,255,255,0.8)', fontWeight: '900' },
+  slotCell:      { borderLeftWidth: 0.5, borderBottomWidth: 0.5, borderColor: '#ececec' },
+  slotHour:      { borderBottomColor: '#c8c8c8' },
+  block:         { borderRadius: 4, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  blockEmoji:    { fontSize: 13 },
 
   palette:         { backgroundColor: colors.white, borderTopWidth: 1, borderTopColor: colors.border, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 10 },
   paletteLabel:    { fontSize: 11, color: '#aaa', fontWeight: '600', textAlign: 'center', marginBottom: 6 },

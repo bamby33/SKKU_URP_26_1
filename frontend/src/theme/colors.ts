@@ -3,8 +3,8 @@ export const colors = {
   primaryLight: '#6DB88F',     // 밝은 민트 그린
   primaryBg: '#E8F5EE',        // 연한 민트 배경
 
-  guardian: '#2D6B4F',         // 딥 포레스트 그린 (보호자)
-  guardianLight: '#4A8E70',    // 미디엄 포레스트 그린
+  guardian: '#4A9B6F',         // 당사자와 통일 (세이지 그린)
+  guardianLight: '#6DB88F',    // 밝은 민트 그린 (primaryLight와 동일)
 
   alert: '#9B2335',
   alertLight: '#C9303F',

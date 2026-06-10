@@ -27,9 +27,10 @@ type TimePickerProps = {
   value: string;
   onChange: (v: string) => void;
   label: string;
+  emoji: string;
 };
 
-function TimeField({ value, onChange, label }: TimePickerProps) {
+function TimeField({ value, onChange, label, emoji }: TimePickerProps) {
   const [visible, setVisible] = useState(false);
   const [selHour, setSelHour] = useState(value.split(':')[0]);
   const [selMin, setSelMin] = useState(value.split(':')[1]);
@@ -122,10 +123,17 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
   const [breakfastTime,  setBreakfastTime]  = useState('08:00');
   const [lunchTime,      setLunchTime]      = useState('12:00');
   const [dinnerTime,     setDinnerTime]     = useState('18:00');
-  const [medTimes,       setMedTimes]       = useState<string[]>([]);
-  const [addingMed,      setAddingMed]      = useState(false);
-  const [medPickerVal,   setMedPickerVal]   = useState('08:00');
+  const [washTimes,      setWashTimes]      = useState<string[]>(['08:00', '20:00']);
+  const [addingWash,     setAddingWash]     = useState(false);
+  const [washPickerVal,  setWashPickerVal]  = useState('21:00');
   const [loading,        setLoading]        = useState(false);
+
+  const addWashTime = () => {
+    if (!washTimes.includes(washPickerVal)) {
+      setWashTimes(p => [...p, washPickerVal].sort());
+    }
+    setAddingWash(false);
+  };
 
   // 고정 일과
   const [fixedItems,     setFixedItems]     = useState<FixedItem[]>([]);
@@ -133,13 +141,6 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
   const [fixedName,      setFixedName]      = useState('');
   const [fixedTime,      setFixedTime]      = useState('09:00');
   const [fixedDays,      setFixedDays]      = useState<number[]>([]); // 빈 배열 = 매일
-
-  const addMedTime = () => {
-    if (!medTimes.includes(medPickerVal)) {
-      setMedTimes(p => [...p, medPickerVal].sort());
-    }
-    setAddingMed(false);
-  };
 
   const addFixedItem = () => {
     if (!fixedName.trim()) return;
@@ -172,7 +173,7 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
         breakfast_time:   breakfastTime,
         lunch_time:       lunchTime,
         dinner_time:      dinnerTime,
-        medication_times: medTimes,
+        wash_times:       washTimes,
         fixed_schedules:  fixedItems,
       });
 
@@ -225,44 +226,46 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
         {/* 기본 루틴 섹션 */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>하루 기본 루틴</Text>
-          <TimeField value={wakeTime}      onChange={setWakeTime}      label="기상 시간" />
-          <TimeField value={breakfastTime} onChange={setBreakfastTime} label="아침 식사" />
-          <TimeField value={lunchTime}     onChange={setLunchTime}     label="점심 식사" />
-          <TimeField value={dinnerTime}    onChange={setDinnerTime}    label="저녁 식사" />
-          <TimeField value={sleepTime}     onChange={setSleepTime}     label="취침 시간" />
+          <TimeField value={wakeTime}      onChange={setWakeTime}      label="기상 시간"  emoji="🌅" />
+          <TimeField value={breakfastTime} onChange={setBreakfastTime} label="아침 식사"  emoji="🍳" />
+          <TimeField value={lunchTime}     onChange={setLunchTime}     label="점심 식사"  emoji="🍱" />
+          <TimeField value={dinnerTime}    onChange={setDinnerTime}    label="저녁 식사"  emoji="🍽️" />
+          <TimeField value={sleepTime}     onChange={setSleepTime}     label="취침 시간"  emoji="🌙" />
         </View>
 
-        {/* 약 복용 섹션 */}
+        {/* 씻기·세면 섹션 (여러 번 가능) */}
         <View style={styles.section}>
           <View style={styles.medHeader}>
-            <Text style={styles.sectionTitle}>약 복용 시간</Text>
-            <Text style={styles.medOptional}>선택</Text>
+            <Text style={styles.sectionTitle}>씻기·세면 시간</Text>
+            <Text style={styles.medOptional}>여러 번 가능</Text>
           </View>
 
-          {medTimes.map((t, i) => (
-            <View key={i} style={styles.medChip}>
-              <Text style={styles.medChipText}>{t}</Text>
-              <TouchableOpacity onPress={() => setMedTimes(p => p.filter((_, j) => j !== i))}>
-                <Text style={styles.medChipDel}>✕</Text>
-              </TouchableOpacity>
-            </View>
-          ))}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {washTimes.map((t, i) => (
+              <View key={i} style={styles.washChip}>
+                <Text style={styles.washChipText}>{t}</Text>
+                <TouchableOpacity onPress={() => setWashTimes(p => p.filter((_, j) => j !== i))}>
+                  <Text style={styles.medChipDel}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
 
-          {addingMed ? (
+          {addingWash ? (
             <View style={styles.medAddRow}>
-              <TimeField value={medPickerVal} onChange={setMedPickerVal} label="약 복용" />
+              <TimeField value={washPickerVal} onChange={setWashPickerVal} label="씻기 시간" emoji="🛁" />
               <View style={styles.medAddBtns}>
-                <TouchableOpacity style={styles.medCancelBtn} onPress={() => setAddingMed(false)}>
+                <TouchableOpacity style={styles.medCancelBtn} onPress={() => setAddingWash(false)}>
                   <Text style={styles.medCancelText}>취소</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.medConfirmBtn} onPress={addMedTime}>
+                <TouchableOpacity style={[styles.medConfirmBtn, { backgroundColor: colors.primary }]} onPress={addWashTime}>
                   <Text style={styles.medConfirmText}>추가</Text>
                 </TouchableOpacity>
               </View>
             </View>
           ) : (
-            <TouchableOpacity style={styles.medAddBtn} onPress={() => setAddingMed(true)}>
-              <Text style={styles.medAddBtnText}>+ 약 복용 시간 추가</Text>
+            <TouchableOpacity style={styles.medAddBtn} onPress={() => setAddingWash(true)}>
+              <Text style={styles.medAddBtnText}>+ 씻기 시간 추가</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -270,7 +273,7 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
         {/* 고정 일과 섹션 */}
         <View style={styles.section}>
           <View style={styles.medHeader}>
-            <Text style={styles.sectionTitle}>📌 고정 일과</Text>
+            <Text style={styles.sectionTitle}>고정 일과</Text>
             <Text style={styles.medOptional}>매일 반드시 있는 것</Text>
           </View>
           <Text style={styles.fixedHint}>
@@ -279,7 +282,6 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
 
           {fixedItems.map((item, i) => (
             <View key={i} style={styles.fixedChip}>
-              <Text style={styles.fixedChipIcon}>📌</Text>
               <View style={{ flex: 1 }}>
                 <Text style={styles.fixedChipName}>{item.name}</Text>
                 <Text style={styles.fixedChipSub}>
@@ -381,7 +383,7 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4FAF7' },
+  container: { flex: 1, backgroundColor: '#F4F6FB' },
   content:   { padding: 24, gap: 20 },
 
   header: {
@@ -474,6 +476,12 @@ const styles = StyleSheet.create({
   },
   medChipText: { fontSize: 14, fontWeight: '700', color: colors.alertLight },
   medChipDel:  { fontSize: 16, color: '#bbb' },
+  washChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: '#E8F5FA', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10,
+    borderWidth: 1.5, borderColor: '#A9D9E6',
+  },
+  washChipText: { fontSize: 14, fontWeight: '700', color: '#2A7A8C' },
   medAddRow:   { gap: 8 },
   medAddBtns:  { flexDirection: 'row', gap: 8 },
   medCancelBtn:{ flex: 1, paddingVertical: 11, borderRadius: 12, backgroundColor: '#eee', alignItems: 'center' },

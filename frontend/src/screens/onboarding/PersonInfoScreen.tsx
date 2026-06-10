@@ -41,6 +41,7 @@ export default function PersonInfoScreen({ navigation }: Props) {
     navigation.navigate('Preferences', {
       userName: name.trim(),
       age: age.trim(),
+      gender: '',
       disabilityType: disabilityType!,
       disabilityLevel: disabilityLevel!,
       occupation: occupation.trim(),
@@ -181,7 +182,7 @@ export default function PersonInfoScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4FAF7' },
+  container: { flex: 1, backgroundColor: '#F4F6FB' },
 
   header: {
     flexDirection: 'row',

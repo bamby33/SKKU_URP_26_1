@@ -17,6 +17,29 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
+
+# ── 다음날 최적화 제안 (보호자 승인 방식) ──────────────────────────────────────
+
+@router.get("/next-day-suggestions/{user_id}")
+def get_next_day_suggestions(user_id: int, db: Session = Depends(get_db)):
+    """최근 데이터로 내일 일과 조정 제안 목록 반환."""
+    from services.optimize import next_day_suggestions
+    return {"suggestions": next_day_suggestions(user_id, db)}
+
+
+class ApplyShortenRequest(BaseModel):
+    schedule_ids: list[int]
+    new_end_time: str
+
+
+@router.post("/apply-shorten")
+def apply_shorten_suggestion(data: ApplyShortenRequest, db: Session = Depends(get_db)):
+    """시간 단축 제안 적용 — 해당 일과 end_time 변경."""
+    from services.optimize import apply_shorten
+    n = apply_shorten(data.schedule_ids, data.new_end_time, db)
+    return {"ok": True, "updated": n}
+
+
 START_H = 6
 TOTAL_SLOTS = 32  # 06:00 ~ 22:00
 
@@ -147,6 +170,7 @@ def suggest_schedule(user_id: int, db: Session = Depends(get_db)):
 ]
 
 규칙:
+- 모든 name(일과 이름)은 반드시 한국어로만 작성하세요. 영어·러시아어 등 외국어 절대 금지.
 - day: 0=월 1=화 2=수 3=목 4=금 5=토 6=일
 - start/end: "HH:MM" 형식, 06:00~22:00 범위
 - emoji: 일과를 가장 잘 표현하는 이모지 하나
@@ -265,15 +289,16 @@ def update_tomorrow_schedule(data: TomorrowNoteRequest, db: Session = Depends(ge
 ]
 
 규칙:
+- 모든 name(일과 이름)은 반드시 한국어로만 작성하세요. 영어·러시아어 등 외국어 절대 금지.
 - start/end: "HH:MM" 형식, 06:00~22:00 범위
 - emoji: 일과를 가장 잘 표현하는 이모지 하나
 - color: 반드시 이 중 하나 선택 "#FFB74D" "#4CAF7D" "#AB77E8" "#6B9BF2" "#5BB7C0" "#E57373" "#26C6DA" "#AED581" "#FF8A65"
 """
 
     try:
-        groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        groq_client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=os.getenv("GROQ_API_KEY"))
         response = groq_client.chat.completions.create(
-            model=os.getenv("GROQ_SCHEDULE_MODEL", "llama-3.1-8b-instant"),
+            model=os.getenv("GROQ_SCHEDULE_MODEL", "llama-3.3-70b-versatile"),
             messages=[{"role": "user", "content": prompt}],
             max_tokens=2048,
         )
@@ -312,6 +337,8 @@ def update_tomorrow_schedule(data: TomorrowNoteRequest, db: Session = Depends(ge
                 user_id=data.user_id,
                 title=f"{item.get('emoji', '📋')} {item['name']}",
                 scheduled_time=item["start"],
+                end_time=item.get("end"),
+                color=color,
                 days_of_week=str(tomorrow_idx),
                 is_active=True,
             ))
@@ -347,6 +374,7 @@ class OnboardingRequest(BaseModel):
     breakfast_time: str = ""
     lunch_time: str = ""
     dinner_time: str = ""
+    wash_times: list[str] = []
     medication_times: list[str] = []
     fixed_schedules: list[FixedScheduleItem] = []
 
@@ -377,6 +405,8 @@ def suggest_schedule_onboarding(data: OnboardingRequest):
         schedule_lines.append(f"  - 점심 식사: {data.lunch_time}")
     if data.dinner_time:
         schedule_lines.append(f"  - 저녁 식사: {data.dinner_time}")
+    if data.wash_times:
+        schedule_lines.append(f"  - 씻기·세면: {', '.join(data.wash_times)}")
     if data.medication_times:
         schedule_lines.append(f"  - 약 복용: {', '.join(data.medication_times)}")
     if data.sleep_time:
@@ -403,11 +433,31 @@ def suggest_schedule_onboarding(data: OnboardingRequest):
     else:
         design_rule = "블록당 30~60분, 하루 8개 내외, 규칙적이고 예측 가능한 루틴"
 
-    base_info = f"""당사자: {data.name}({age_str}, {gender}), {disability} {level}
-하는 일: {occupation_str} / 좋아함: {likes_str} / 힘듦: {dislikes_str}
-기본 시간: {schedule_str}
-고정 일과: {fixed_str}
-설계 원칙: {design_rule}"""
+    # 직업 유형별 주중 고정 시간 규칙
+    work_rule = ""
+    if occupation_str and occupation_str != "없음":
+        work_rule = f"\n- 직업({occupation_str})이 있으므로 주중에는 출근/업무 시간을 반드시 포함하세요."
+
+    base_info = f"""[당사자 정보]
+이름: {data.name} / 나이: {age_str} / 성별: {gender}
+장애: {disability} {level}
+직업/활동: {occupation_str}
+좋아하는 것: {likes_str}
+힘든 것·싫어하는 것: {dislikes_str}
+취미/일상: {daily_life_str}
+특이사항: {problem_notes_str}
+
+[매일 동일하게 지켜야 할 기본 시간]
+{schedule_str}
+
+[고정 일과 - 절대 변경·삭제 금지]
+{fixed_str}
+
+[설계 원칙]
+- {design_rule}{work_rule}
+- 기상·식사·취침 시간은 주중/주말 모두 동일하게 유지할 것
+- "자유 시간", "자율 활동" 같은 모호한 이름 금지 → 좋아하는 것({likes_str})을 반영한 구체적 활동명 사용
+- 같은 활동(식사, 기상 등)은 매일 정확히 같은 시간에 배치할 것"""
 
     DAY_NAMES = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
     valid_colors = {
@@ -426,13 +476,17 @@ def suggest_schedule_onboarding(data: OnboardingRequest):
         day_type = "주말" if day_idx >= 5 else "주중"
         prompt = f"""{base_info}
 
-위 정보를 바탕으로 {day_name}({day_type}) 하루 시간표만 JSON으로 만들어주세요.
-JSON 배열만 출력하세요. 설명 없이:
+위 정보를 바탕으로 {day_name}({day_type}) 하루 시간표를 JSON으로 만들어주세요.
+JSON 배열만 출력하세요. 다른 설명 없이:
 [
   {{"day": {day_idx}, "start": "07:00", "end": "07:30", "name": "기상·세면", "emoji": "🌅", "color": "#FFB74D"}},
   ...
 ]
-규칙: start/end는 HH:MM(06:00~22:00), color는 "#FFB74D" "#4CAF7D" "#AB77E8" "#6B9BF2" "#5BB7C0" "#E57373" "#26C6DA" "#AED581" "#FF8A65" 중 하나."""
+규칙:
+- 모든 name(일과 이름)은 반드시 한국어로만 작성하세요. 영어·러시아어 등 외국어 절대 금지.
+- start/end: HH:MM 형식, 06:00~22:00 범위
+- color: "#FFB74D" "#4CAF7D" "#AB77E8" "#6B9BF2" "#5BB7C0" "#E57373" "#26C6DA" "#AED581" "#FF8A65" 중 하나
+- 같은 종류의 활동(예: 아침 식사)은 다른 요일과 동일한 색 사용"""
         try:
             response = groq_client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
@@ -466,12 +520,88 @@ JSON 배열만 출력하세요. 설명 없이:
             logger.error(f"LLM error day {day_idx}: {e}")
             return []
 
-    with ThreadPoolExecutor(max_workers=7) as executor:
-        futures = {executor.submit(generate_day, i): i for i in range(7)}
-        for future in as_completed(futures):
-            all_blocks.extend(future.result())
+    # 일관성 보장: 주중 1개·주말 1개 템플릿만 생성 후 각 요일에 복제
+    # (요일별 독립 생성 시 같은 활동이 요일마다 제각각 나오는 문제 방지)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        wd_future = executor.submit(generate_day, 0)  # 주중 대표 (월)
+        we_future = executor.submit(generate_day, 5)  # 주말 대표 (토)
+        wd_blocks = wd_future.result()
+        we_blocks = we_future.result()
+
+    for d in range(5):        # 월~금: 주중 템플릿 복제
+        all_blocks.extend({**b, "day": d} for b in wd_blocks)
+    for d in range(5, 7):     # 토~일: 주말 템플릿 복제
+        all_blocks.extend({**b, "day": d} for b in we_blocks)
 
     if not all_blocks:
         raise HTTPException(status_code=500, detail="AI가 유효한 시간표를 생성하지 못했어요. 다시 시도해주세요.")
+
+    # ── 후처리 ──────────────────────────────────────────────────────────────────
+    import re
+    from collections import Counter
+
+    def _norm(name: str) -> str:
+        return re.sub(r"\s+", "", name)
+
+    # 1. 규칙적 루틴(기상·식사·씻기)을 모든 요일에 동일한 시각으로 강제 고정
+    #    각 그룹은 여러 시각 가능(예: 씻기 아침·저녁) → 기존 매칭 블록 제거 후 지정 시각에 재생성
+    routine_groups = []  # (slots, name, emoji, color, keywords)
+    if data.wake_time:
+        routine_groups.append(([_to_slot(data.wake_time)], "기상·세면", "🌅", "#FFB74D", ("기상", "일어", "세면")))
+    if data.breakfast_time:
+        routine_groups.append(([_to_slot(data.breakfast_time)], "아침 식사", "🍚", "#4CAF7D", ("아침",)))
+    if data.lunch_time:
+        routine_groups.append(([_to_slot(data.lunch_time)], "점심 식사", "🍱", "#26C6DA", ("점심",)))
+    if data.dinner_time:
+        routine_groups.append(([_to_slot(data.dinner_time)], "저녁 식사", "🍽️", "#FF8A65", ("저녁",)))
+    if data.wash_times:
+        routine_groups.append(([_to_slot(w) for w in data.wash_times], "씻기·세면", "🛁", "#5BB7C0", ("씻", "세면", "목욕", "샤워")))
+
+    for day_idx in range(7):
+        for slots, rname, remoji, rcolor, kws in routine_groups:
+            # 이 요일에서 해당 루틴 키워드를 포함한 기존 블록 모두 제거
+            all_blocks = [
+                b for b in all_blocks
+                if not (b["day"] == day_idx and any(k in b["name"] for k in kws))
+            ]
+            # 지정된 각 시각에 표준 블록 생성
+            for slot in slots:
+                if 0 <= slot < TOTAL_SLOTS:
+                    all_blocks.append({
+                        "day": day_idx, "startSlot": slot, "endSlot": min(slot + 1, TOTAL_SLOTS),
+                        "name": rname, "emoji": remoji, "color": rcolor,
+                    })
+
+    # 2. 같은 활동명(공백 무시) → 같은 색·이모지로 통일
+    norm_color: dict = {}
+    norm_emoji: dict = {}
+    for block in all_blocks:
+        key = _norm(block["name"])
+        norm_color.setdefault(key, Counter())[block["color"]] += 1
+        norm_emoji.setdefault(key, Counter())[block["emoji"]] += 1
+    best_color = {k: cnt.most_common(1)[0][0] for k, cnt in norm_color.items()}
+    best_emoji = {k: cnt.most_common(1)[0][0] for k, cnt in norm_emoji.items()}
+    for block in all_blocks:
+        key = _norm(block["name"])
+        block["color"] = best_color[key]
+        block["emoji"] = best_emoji[key]
+
+    # 3. 취침 블록 자동 추가 (기상 전, 취침 후)
+    if data.wake_time or data.sleep_time:
+        for day_idx in range(7):
+            if data.wake_time:
+                wake_slot = _to_slot(data.wake_time)
+                if wake_slot > 0:
+                    all_blocks.append({
+                        "day": day_idx, "startSlot": 0, "endSlot": wake_slot,
+                        "name": "취침", "emoji": "😴", "color": "#AED581",
+                    })
+            if data.sleep_time:
+                sleep_slot = _to_slot(data.sleep_time)
+                if sleep_slot < TOTAL_SLOTS:
+                    all_blocks.append({
+                        "day": day_idx, "startSlot": sleep_slot, "endSlot": TOTAL_SLOTS,
+                        "name": "취침", "emoji": "😴", "color": "#AED581",
+                    })
 
     return {"blocks": all_blocks}

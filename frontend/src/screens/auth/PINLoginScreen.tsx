@@ -24,7 +24,14 @@ export default function PINLoginScreen({ navigation }: Props) {
   const [userId, setUserId] = useState<string | null>(null);
 
   useEffect(() => {
-    AsyncStorage.getItem('user_id').then(setUserId);
+    AsyncStorage.getItem('user_id').then(async (id) => {
+      // 테스트용: 저장된 계정이 없으면 1번(test) 계정으로 폴백
+      if (!id) {
+        id = '1';
+        await AsyncStorage.setItem('user_id', id);
+      }
+      setUserId(id);
+    });
   }, []);
 
   const handleKey = async (key: string) => {
@@ -98,7 +105,7 @@ export default function PINLoginScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4FAF7' },
+  container: { flex: 1, backgroundColor: '#F4F6FB' },
   header: { paddingHorizontal: 20, paddingTop: 12 },
   backBtn: {
     alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center',

@@ -77,6 +77,7 @@ class Guardian(Base):
     email = Column(String, nullable=True)
     username = Column(String, unique=True, nullable=True)    # 로그인 아이디
     hashed_password = Column(String, nullable=True)          # bcrypt 해시
+    push_token = Column(String, nullable=True)               # Expo 푸시 토큰
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="guardian")
@@ -89,10 +90,13 @@ class Schedule(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), index=True)
     title = Column(String, nullable=False)              # 예: "아침 식사"
-    scheduled_time = Column(String, nullable=False)     # "09:00" 형식
+    scheduled_time = Column(String, nullable=False)     # "09:00" 형식 (시작 시간)
+    end_time = Column(String, nullable=True)            # "09:30" 형식 (종료 시간)
+    color = Column(String, nullable=True)               # 블록 색상 "#RRGGBB"
     days_of_week = Column(String, default="0,1,2,3,4,5,6")  # 0=월 ~ 6=일
     is_active = Column(Boolean, default=True)
     is_fixed = Column(Boolean, default=False)
+    category = Column(String, nullable=True)            # productive(숙제·자습·취미·운동) | routine(식사·위생·수면) | other
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="schedules")
@@ -108,7 +112,14 @@ class ScheduleLog(Base):
     schedule_id = Column(Integer, ForeignKey("schedules.id"), index=True)
     status = Column(Enum(ScheduleStatus), default=ScheduleStatus.PENDING)
     log_date = Column(DateTime, default=datetime.utcnow)
-    note = Column(Text, nullable=True)
+    note = Column(Text, nullable=True)                    # 미수행 사유 / 메모
+    refusal_count = Column(Integer, default=0)            # (구) '안했어요' 횟수 — 호환 유지
+    # ── 동행 파이프라인 (시작/진행/종료) ──
+    response_type = Column(String, nullable=True)         # started | later | no_response (시작 알림 반응)
+    started_at = Column(DateTime, nullable=True)          # 일과 시작 시각
+    ended_at = Column(DateTime, nullable=True)            # 일과 종료 시각
+    actual_duration_min = Column(Integer, nullable=True)  # 실제 진행 시간(분)
+    early_stop = Column(Boolean, default=False)           # 예정보다 일찍 '그만할래요'
 
     schedule = relationship("Schedule", back_populates="logs")
 
@@ -142,6 +153,7 @@ class DailyReport(Base):
     ai_summary = Column(Text, nullable=True)            # AI 3-4문장 분석
     achieved = Column(Integer, default=0)
     total = Column(Integer, default=0)
+    self_assessment = Column(String, nullable=True)     # good | soso | bad (당사자 "오늘 어땠나요?")
     is_complete = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
@@ -159,6 +171,18 @@ class UserPIN(Base):
     correct_emoji = Column(String, nullable=False)        # "🍗"
     wrong_options = Column(Text, nullable=False)          # JSON 문자열
 
+
+
+class ScheduleTransition(Base):
+    """일과 간 전환 결과 — 자폐 전환 어려움 분석/다음날 최적화용"""
+    __tablename__ = "schedule_transitions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    from_schedule_id = Column(Integer, ForeignKey("schedules.id"), nullable=True, index=True)
+    to_schedule_id = Column(Integer, ForeignKey("schedules.id"), index=True)
+    result = Column(String, nullable=False)             # accepted | refused | no_response
+    log_date = Column(DateTime, default=datetime.utcnow)
 
 
 class GuardianNotification(Base):
@@ -183,5 +207,41 @@ class ChatMessage(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+def _migrate_sqlite():
+    """기존 SQLite DB에 신규 컬럼을 추가 (데이터 보존). SQLite는 ADD COLUMN 지원."""
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+    table_names = inspector.get_table_names()
+
+    # (테이블, 컬럼, 정의) — 컬럼이 없을 때만 ADD
+    additions = [
+        ("schedules", "end_time", "VARCHAR"),
+        ("schedules", "color", "VARCHAR"),
+        ("schedules", "is_fixed", "BOOLEAN DEFAULT 0"),
+        ("guardians", "push_token", "VARCHAR"),
+        ("schedule_logs", "user_id", "INTEGER"),
+        ("schedule_logs", "refusal_count", "INTEGER DEFAULT 0"),
+        ("schedule_logs", "response_type", "VARCHAR"),
+        ("schedule_logs", "started_at", "DATETIME"),
+        ("schedule_logs", "ended_at", "DATETIME"),
+        ("schedule_logs", "actual_duration_min", "INTEGER"),
+        ("schedule_logs", "early_stop", "BOOLEAN DEFAULT 0"),
+        ("schedules", "category", "VARCHAR"),
+        ("daily_reports", "self_assessment", "VARCHAR"),
+    ]
+    with engine.begin() as conn:
+        for table, column, coldef in additions:
+            if table not in table_names:
+                continue
+            existing = {c["name"] for c in inspector.get_columns(table)}
+            if column not in existing:
+                conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {column} {coldef}'))
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
+    try:
+        _migrate_sqlite()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"SQLite migration skipped: {e}")

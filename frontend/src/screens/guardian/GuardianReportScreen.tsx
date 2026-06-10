@@ -7,15 +7,18 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
-  Alert, ActivityIndicator, RefreshControl, TextInput, Animated,
+  Alert, ActivityIndicator, RefreshControl, TextInput, Animated, Modal,
+  LayoutAnimation, UIManager, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
+import * as Notifications from 'expo-notifications';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
 import { api } from '../../api/client';
+import { registerPushToken } from '../../utils/push';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'GuardianReport'>;
@@ -32,6 +35,16 @@ type BehaviorAlert = {
   logged_at: string; is_read: boolean;
 };
 type TomorrowSchedule = { id: number; title: string; time: string };
+type HeatStatus = 'green' | 'yellow' | 'red' | 'none';
+type Suitability = {
+  schedule_id: number; title: string; time: string;
+  grade: 'green' | 'yellow' | 'red' | 'unknown';
+  days: number; completed_full: number; early_stop: number; missed: number; refused_transitions: number;
+  cells: { label: string; status: HeatStatus }[];
+};
+const HEAT_COLOR: Record<HeatStatus, string> = {
+  green: '#22C55E', yellow: '#FBBF24', red: '#EF4444', none: '#E9EDF3',
+};
 
 type Dashboard = {
   current_schedule: CurrentSchedule | null;
@@ -44,9 +57,36 @@ type Dashboard = {
   has_unread: boolean;
   ai_summary: string | null;
   tomorrow_schedules: TomorrowSchedule[];
+  suitability?: Suitability[];
+  self_assessment?: 'good' | 'soso' | 'bad' | null;
+  today_items?: { schedule_id: number; title: string; time: string; status: string }[];
+};
+
+const GRADE_META: Record<string, { dot: string; label: string }> = {
+  green:   { dot: '🟢', label: '잘 맞아요' },
+  yellow:  { dot: '🟡', label: '버거워해요' },
+  red:     { dot: '🔴', label: '안 맞아요' },
+  unknown: { dot: '⚪', label: '데이터 부족' },
+};
+const MOOD_META: Record<string, string> = {
+  good: '😊 좋았어요', soso: '😐 그저 그래요', bad: '😢 힘들었어요',
 };
 
 /* ── 유틸 ── */
+// 일과 제목에서 이모지 제거 (보호자 화면은 텍스트만 표시)
+function noEmoji(t: string): string {
+  return t.replace(/\p{Extended_Pictographic}/gu, '').replace(/️/g, '').trim();
+}
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
+function nowHHMM(): string {
+  const n = new Date();
+  return `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`;
+}
+
 function formatTime(hhmm: string): string {
   const [h, m] = hhmm.split(':').map(Number);
   const ampm = h < 12 ? '오전' : '오후';
@@ -60,9 +100,9 @@ function formatLogTime(iso: string): string {
 }
 
 function statusLabel(status: string) {
-  if (status === 'achieved') return '✓ 완료';
-  if (status === 'missed') return '✗ 미완료';
-  return '⋯ 대기';
+  if (status === 'achieved') return '완료';
+  if (status === 'missed') return '미완료';
+  return '대기';
 }
 function statusBg(status: string) {
   if (status === 'achieved') return '#D1FAE5';
@@ -85,9 +125,8 @@ export default function GuardianReportScreen({ navigation }: Props) {
   const [data, setData] = useState<Dashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [alertsExpanded, setAlertsExpanded] = useState(false);
-  const [tomorrowNote, setTomorrowNote] = useState('');
-  const [updatingNote, setUpdatingNote] = useState(false);
+  const [detail, setDetail] = useState<'achievement' | 'alerts' | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const toastOpacity = useRef(new Animated.Value(0)).current;
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -100,29 +139,6 @@ export default function GuardianReportScreen({ navigation }: Props) {
   };
 
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
-
-  const handleUpdateTomorrow = async () => {
-    if (!tomorrowNote.trim()) {
-      Alert.alert('입력 필요', '내일 특이사항을 입력해주세요.');
-      return;
-    }
-    setUpdatingNote(true);
-    try {
-      const userId = await AsyncStorage.getItem('user_id');
-      if (!userId) return;
-      await api.post('/ai/update-tomorrow', {
-        user_id: Number(userId),
-        note: tomorrowNote.trim(),
-      });
-      showToast();
-      setTomorrowNote('');
-      fetchDashboard();
-    } catch {
-      Alert.alert('오류', 'AI 스케줄 업데이트에 실패했어요. 다시 시도해주세요.');
-    } finally {
-      setUpdatingNote(false);
-    }
-  };
 
   const fetchDashboard = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -139,6 +155,17 @@ export default function GuardianReportScreen({ navigation }: Props) {
       setRefreshing(false);
     }
   }, []);
+
+  // 푸시 토큰 등록 + 알림 탭 시 대시보드 새로고침
+  useEffect(() => {
+    AsyncStorage.getItem('user_id').then((uid) => {
+      if (uid) registerPushToken(Number(uid));
+    });
+    const sub = Notifications.addNotificationResponseReceivedListener(() => {
+      fetchDashboard(true);
+    });
+    return () => sub.remove();
+  }, [fetchDashboard]);
 
   // 화면 포커스마다 새로고침 + 1분 타이머
   useFocusEffect(
@@ -162,22 +189,6 @@ export default function GuardianReportScreen({ navigation }: Props) {
     } catch {}
   };
 
-  const handleTestSms = async () => {
-    const userId = await AsyncStorage.getItem('user_id');
-    if (!userId) return;
-    try {
-      const res = await api.post(`/guardian/user/${userId}/test-sms`);
-      const { sms_sent, recipient, content } = res.data;
-      if (sms_sent) {
-        Alert.alert('SMS 발송 완료 ✅', `수신: ${recipient}\n\n${content}`);
-      } else {
-        Alert.alert('콘솔 출력 (SMS 미설정)', `수신: ${recipient}\n\n${content}\n\n.env에 Twilio 정보를 입력하면 실제 SMS가 발송돼요.`);
-      }
-    } catch {
-      Alert.alert('오류', 'SMS 테스트에 실패했어요.');
-    }
-  };
-
   const handleLogout = () => {
     Alert.alert('로그아웃', '로그아웃 하시겠어요?', [
       { text: '취소', style: 'cancel' },
@@ -191,29 +202,20 @@ export default function GuardianReportScreen({ navigation }: Props) {
     ]);
   };
 
-  const handleAlertsToggle = () => {
-    if (!alertsExpanded && data?.has_unread) {
-      handleMarkRead();
-    }
-    setAlertsExpanded((v) => !v);
+  const toggleExpand = (kind: 'achievement' | 'alerts') => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    if (kind === 'alerts' && data?.has_unread) handleMarkRead();
+    setDetail((prev) => (prev === kind ? null : kind));
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* 헤더 */}
+      {/* 헤더 — 당사자 페이지와 통일 (Routy 브랜드) */}
       <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <Text style={styles.headerIcon}>📊</Text>
-          <Text style={styles.headerTitle}>AI 돌봄 · 보호자</Text>
-        </View>
-        <View style={styles.headerRight}>
-          <TouchableOpacity style={styles.smsTestBtn} onPress={handleTestSms} activeOpacity={0.75}>
-            <Text style={styles.smsTestText}>📱 SMS 테스트</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.75}>
-            <Text style={styles.logoutText}>🚪 로그아웃</Text>
-          </TouchableOpacity>
-        </View>
+        <Text style={styles.hBrand}>Routy</Text>
+        <TouchableOpacity style={styles.menuBtn} onPress={() => setMenuOpen(true)} activeOpacity={0.75}>
+          <Text style={styles.menuIcon}>☰</Text>
+        </TouchableOpacity>
       </View>
 
       {loading ? (
@@ -233,189 +235,159 @@ export default function GuardianReportScreen({ navigation }: Props) {
             />
           }
         >
-          {/* ── 1. 현재 수행 중인 일과 OR 오늘 일과 리포트 ── */}
-          {!data?.day_complete ? (
-            /* 일과 진행 중: 현재 스케줄 */
-            <>
-              <Text style={styles.sectionTitle}>⏱ 현재 수행 중인 일과</Text>
-              {data?.current_schedule ? (
-                <View style={styles.currentCard}>
-                  <View style={styles.currentLeft}>
-                    <View style={styles.liveDot} />
-                    <View>
-                      <Text style={styles.currentTime}>{formatTime(data.current_schedule.time)}</Text>
-                      <Text style={styles.currentTitle}>{data.current_schedule.title}</Text>
-                    </View>
-                  </View>
-                  <View style={styles.inProgressBadge}>
-                    <Text style={styles.inProgressText}>진행 중</Text>
-                  </View>
+          {/* ── 상단 요약 (탭하면 상세) ── */}
+          {data && (() => {
+            const newAlerts = data.behavior_alerts.filter(a => !a.is_read).length;
+            const redCount = (data.suitability ?? []).filter(s => s.grade === 'red').length;
+            return (
+              <View style={styles.summaryCard}>
+                <TouchableOpacity style={[styles.summaryItem, detail === 'achievement' && styles.summaryItemActive]} activeOpacity={0.7} onPress={() => toggleExpand('achievement')}>
+                  <Text style={styles.summaryValue}>{data.live_rate}%</Text>
+                  <Text style={styles.summaryLabel}>오늘 달성률</Text>
+                </TouchableOpacity>
+                <View style={styles.summaryDivider} />
+                <TouchableOpacity style={[styles.summaryItem, detail === 'alerts' && styles.summaryItemActive]} activeOpacity={0.7} onPress={() => toggleExpand('alerts')}>
+                  <Text style={[styles.summaryValue, newAlerts > 0 && { color: '#DC2626' }]}>{newAlerts}</Text>
+                  <Text style={styles.summaryLabel}>새 확인사항</Text>
+                </TouchableOpacity>
+                <View style={styles.summaryDivider} />
+                <View style={styles.summaryItem}>
+                  <Text style={[styles.summaryValue, redCount > 0 && { color: '#DC2626' }]}>{redCount}</Text>
+                  <Text style={styles.summaryLabel}>🔴 안 맞는 일과</Text>
                 </View>
-              ) : (
-                <View style={styles.emptyCard}>
-                  <Text style={styles.emptyText}>지금 진행 중인 일과가 없어요.</Text>
-                </View>
-              )}
-            </>
-          ) : (
-            /* 일과 종료: AI 분석 리포트 */
-            <>
-              <Text style={styles.sectionTitle}>📋 오늘 일과 리포트</Text>
-              {data.today_report ? (
-                <View style={styles.reportCard}>
-                  <View style={styles.reportHeader}>
-                    <View>
-                      <Text style={styles.reportDate}>{data.today_report.date.replace(/-/g, '. ')}</Text>
-                      <Text style={styles.reportLabel}>일과 달성률</Text>
-                    </View>
-                    <View style={{ alignItems: 'flex-end' }}>
-                      <Text style={styles.reportScore}>{data.today_report.achievement_rate}%</Text>
-                      <Text style={styles.reportLabel}>
-                        {data.today_report.achieved} / {data.today_report.total} 완료
-                      </Text>
-                    </View>
-                  </View>
-                  <View style={styles.progressBg}>
-                    <View style={[styles.progressFill, { width: `${data.today_report.achievement_rate}%` as any }]} />
-                  </View>
-                  {data.today_report.items.map((item, i) => (
-                    <View key={item.schedule_id} style={[
-                      styles.taskRow,
-                      i === data.today_report!.items.length - 1 && { borderBottomWidth: 0 },
-                    ]}>
-                      <Text style={styles.taskTime}>{formatTime(item.time)}</Text>
-                      <Text style={styles.taskText} numberOfLines={1}>{item.title}</Text>
-                      <View style={[styles.taskBadge, { backgroundColor: statusBg(item.status) }]}>
-                        <Text style={styles.taskBadgeText}>{statusLabel(item.status)}</Text>
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              ) : (
-                <View style={styles.emptyCard}>
-                  <Text style={styles.emptyText}>리포트를 준비 중이에요.</Text>
-                </View>
-              )}
-            </>
-          )}
+              </View>
+            );
+          })()}
+          {detail === null && <Text style={styles.summaryHint}>달성률·확인사항을 누르면 자세히 볼 수 있어요</Text>}
 
-          {/* ── 2. 오늘 달성률 (항상 표시) ── */}
-          <View style={styles.achieveCard}>
-            <View style={styles.achieveRow}>
-              <Text style={styles.achieveTitle}>오늘 일과 달성률</Text>
-              <Text style={styles.achievePct}>{data?.live_rate ?? 0}%</Text>
-            </View>
-            <View style={styles.achieveTrack}>
-              <View style={[styles.achieveFill, { width: `${data?.live_rate ?? 0}%` as any }]} />
-            </View>
-            <Text style={styles.achieveSub}>
-              {data?.live_achieved ?? 0} / {data?.live_total ?? 0} 완료
-            </Text>
-          </View>
-
-          {/* ── 3. 오늘의 확인사항 (이상행동 알림) ── */}
-          <TouchableOpacity
-            style={styles.alertsHeader}
-            onPress={handleAlertsToggle}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.sectionTitle}>📋 오늘의 확인사항</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              {data?.has_unread && (
-                <View style={styles.redDot} />
-              )}
-              <Text style={styles.expandIcon}>{alertsExpanded ? '▲' : '▼'}</Text>
-            </View>
-          </TouchableOpacity>
-
-          {alertsExpanded && (
-            <View style={styles.alertsCard}>
-              {!data?.behavior_alerts.length ? (
-                <Text style={styles.emptyAlertsText}>오늘 이상행동 기록이 없어요. 👍</Text>
-              ) : (
-                data.behavior_alerts.map((alert) => (
-                  <View key={alert.id} style={[styles.alertRow, { backgroundColor: stageBg(alert.stage) }]}>
-                    <View style={styles.alertLeft}>
-                      <Text style={[styles.alertStage, { color: stageColor(alert.stage) }]}>
-                        {alert.stage_label}
-                      </Text>
-                      {alert.schedule_title && (
-                        <Text style={styles.alertSchedule}>{alert.schedule_title} 일과 중</Text>
-                      )}
-                      <Text style={styles.alertTrigger}>
-                        {alert.trigger?.includes('voice') ? '🎙 음성 감지' :
-                         alert.trigger?.includes('text') ? '💬 텍스트 감지' :
-                         alert.trigger?.includes('gps') ? '📍 GPS 감지' : '감지됨'}
-                      </Text>
-                    </View>
-                    <Text style={styles.alertTime}>{formatLogTime(alert.logged_at)}</Text>
-                  </View>
-                ))
-              )}
-            </View>
-          )}
-
-          {/* ── 3. AI 스케줄 분석 (일과 종료 후만) ── */}
-          {data?.day_complete && data.ai_summary && (
-            <View style={styles.aiCard}>
-              <Text style={styles.aiTitle}>✨ AI 하루 분석</Text>
-              <Text style={styles.aiBody}>{data.ai_summary}</Text>
-            </View>
-          )}
-
-          {/* ── 4. 내일 스케줄 ── */}
-          <Text style={styles.sectionTitle}>📅 내일 스케줄</Text>
-          {data?.tomorrow_schedules.length ? (
-            <View style={styles.tomorrowCard}>
-              {data.tomorrow_schedules.map((item) => (
-                <View key={item.id} style={styles.tItem}>
+          {/* 인라인 펼침 — 오늘 달성률 → 오늘 일과 목록 */}
+          {detail === 'achievement' && (
+            <View style={styles.expandCard}>
+              {!data?.today_items?.length ? (
+                <Text style={styles.emptyText}>오늘 등록된 일과가 없어요.</Text>
+              ) : data.today_items.map((item, i) => (
+                <View key={item.schedule_id} style={[styles.tItem, i === data.today_items!.length - 1 && styles.tItemLast]}>
                   <Text style={styles.tTime}>{formatTime(item.time)}</Text>
-                  <Text style={styles.tLabel}>{item.title}</Text>
+                  <Text style={styles.tLabel} numberOfLines={1}>{noEmoji(item.title)}</Text>
+                  <View style={[styles.taskBadge, { backgroundColor: statusBg(item.status) }]}>
+                    <Text style={styles.taskBadgeText}>{statusLabel(item.status)}</Text>
+                  </View>
                 </View>
               ))}
             </View>
-          ) : (
-            <View style={[styles.emptyCard, { backgroundColor: colors.primary }]}>
-              <Text style={[styles.emptyText, { color: '#BFDBFE' }]}>내일 등록된 스케줄이 없어요.</Text>
+          )}
+
+          {/* 인라인 펼침 — 새 확인사항 */}
+          {detail === 'alerts' && (
+            <View style={styles.expandCard}>
+              {!data?.behavior_alerts.length ? (
+                <Text style={styles.emptyAlertsText}>오늘 이상행동 기록이 없어요.</Text>
+              ) : data.behavior_alerts.map((alert) => (
+                <View key={alert.id} style={[styles.alertRow, { backgroundColor: stageBg(alert.stage) }]}>
+                  <View style={styles.alertLeft}>
+                    <Text style={[styles.alertStage, { color: stageColor(alert.stage) }]}>{alert.stage_label}</Text>
+                    {alert.schedule_title && <Text style={styles.alertSchedule}>{alert.schedule_title} 일과 중</Text>}
+                    <Text style={styles.alertTrigger}>
+                      {alert.trigger?.includes('emergency') ? '긴급 호출 (당사자 요청)' :
+                       alert.trigger?.includes('voice') ? '음성 감지' :
+                       alert.trigger?.includes('text') ? '텍스트 감지' :
+                       alert.trigger?.includes('gps') ? 'GPS 감지' : '감지됨'}
+                    </Text>
+                  </View>
+                  <Text style={styles.alertTime}>{formatLogTime(alert.logged_at)}</Text>
+                </View>
+              ))}
             </View>
           )}
 
-          {/* ── 5. 내일 특이사항 ── */}
-          <View style={styles.tomorrowNoteCard}>
-            <Text style={styles.tomorrowNoteLabel}>내일 특이사항</Text>
-            <TextInput
-              style={styles.tomorrowNoteInput}
-              placeholder={'예) 내일 12시에 병원 예약이 있어요'}
-              placeholderTextColor="#bbb"
-              value={tomorrowNote}
-              onChangeText={setTomorrowNote}
-              multiline
-              numberOfLines={3}
-              textAlignVertical="top"
-            />
-            <TouchableOpacity
-              style={[styles.updateNoteBtn, updatingNote && { opacity: 0.6 }]}
-              activeOpacity={0.8}
-              onPress={handleUpdateTomorrow}
-              disabled={updatingNote}
-            >
-              {updatingNote
-                ? <ActivityIndicator color="#fff" size="small" />
-                : <Text style={styles.updateNoteBtnText}>스케줄 업데이트하기</Text>
-              }
-            </TouchableOpacity>
-          </View>
-
-          {/* ── 6. 일과 수정 ── */}
-          <TouchableOpacity
-            style={styles.editBtn}
-            activeOpacity={0.8}
-            onPress={() => navigation.navigate('WeekScheduleEdit')}
-          >
-            <Text style={styles.editBtnText}>✏️  일과 수정하기</Text>
+          {/* ── 현재 수행 중인 일과 (탭 → 오늘 일과 페이지) ── */}
+          <Text style={styles.sectionTitle}>현재 수행 중인 일과</Text>
+          <TouchableOpacity activeOpacity={0.85} onPress={() => navigation.navigate('GuardianToday')}>
+            {data?.current_schedule ? (
+              <View style={styles.currentCard}>
+                <View style={styles.currentLeft}>
+                  <View style={styles.liveDot} />
+                  <View>
+                    <Text style={styles.currentTime}>{formatTime(data.current_schedule.time)}</Text>
+                    <Text style={styles.currentTitle}>{noEmoji(data.current_schedule.title)}</Text>
+                  </View>
+                </View>
+                <View style={styles.inProgressBadge}>
+                  <Text style={styles.inProgressText}>진행 중</Text>
+                </View>
+              </View>
+            ) : (
+              <View style={styles.currentCard}>
+                <Text style={styles.emptyText}>지금 진행 중인 일과가 없어요.</Text>
+              </View>
+            )}
+            <Text style={styles.tapHint}>탭하면 오늘 일과 전체를 볼 수 있어요 ›</Text>
           </TouchableOpacity>
+
+          {/* ── 일과별 적합도 (상시 표시) ── */}
+          {data?.suitability && data.suitability.length > 0 && (
+            <>
+              <Text style={styles.sectionTitle}>일과별 적합도 <Text style={styles.sectionSub}>(최근 7일)</Text></Text>
+              <View style={styles.heatCard}>
+                <View style={styles.heatRow}>
+                  <View style={styles.heatNameCol} />
+                  {(data.suitability[0]?.cells ?? []).map((c, i) => (
+                    <Text key={i} style={styles.heatColLabel}>{c.label}</Text>
+                  ))}
+                </View>
+                {data.suitability.map(su => (
+                  <View key={su.schedule_id} style={styles.heatRow}>
+                    <Text style={styles.heatName} numberOfLines={1}>{noEmoji(su.title)}</Text>
+                    {su.cells.map((c, i) => (
+                      <View key={i} style={styles.heatCellWrap}>
+                        <View style={[styles.heatCell, { backgroundColor: HEAT_COLOR[c.status] }]} />
+                      </View>
+                    ))}
+                  </View>
+                ))}
+                <View style={styles.heatLegend}>
+                  {([['green','완료'],['yellow','중단'],['red','미수행'],['none','기록없음']] as [HeatStatus,string][]).map(([st, label]) => (
+                    <View key={st} style={styles.legendItem}>
+                      <View style={[styles.legendDot, { backgroundColor: HEAT_COLOR[st] }]} />
+                      <Text style={styles.legendText}>{label}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            </>
+          )}
+
+          {/* ── 오늘 아이 자기평가 ── */}
+          {data?.self_assessment && (
+            <View style={styles.moodCard}>
+              <Text style={styles.moodCardLabel}>오늘 아이의 하루 평가</Text>
+              <Text style={styles.moodCardValue}>{MOOD_META[data.self_assessment] ?? '-'}</Text>
+            </View>
+          )}
         </ScrollView>
       )}
+
+      {/* ── 메뉴 (내일 준비 / 일과 수정 / 로그아웃) ── */}
+      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
+        <TouchableOpacity style={styles.menuBg} activeOpacity={1} onPress={() => setMenuOpen(false)} />
+        <View style={styles.menuPanel}>
+          <Text style={styles.menuPanelTitle}>Menu</Text>
+          <TouchableOpacity style={styles.menuRow} activeOpacity={0.7}
+            onPress={() => { setMenuOpen(false); navigation.navigate('GuardianTomorrow'); }}>
+            <Text style={styles.menuRowText}>내일 일과</Text>
+          </TouchableOpacity>
+          <View style={styles.menuDivider} />
+          <TouchableOpacity style={styles.menuRow} activeOpacity={0.7}
+            onPress={() => { setMenuOpen(false); navigation.navigate('ScheduleEdit'); }}>
+            <Text style={styles.menuRowText}>일과 편집</Text>
+          </TouchableOpacity>
+          <View style={styles.menuDivider} />
+          <TouchableOpacity style={styles.menuRow} activeOpacity={0.7}
+            onPress={() => { setMenuOpen(false); handleLogout(); }}>
+            <Text style={[styles.menuRowText, { color: '#E53E3E' }]}>로그아웃</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
 
       {/* 토스트 */}
       <Animated.View style={[styles.toast, { opacity: toastOpacity }]} pointerEvents="none">
@@ -426,34 +398,50 @@ export default function GuardianReportScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  container: { flex: 1, backgroundColor: '#F4F6FB' },
 
   header: {
-    backgroundColor: colors.guardian,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 13,
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    paddingBottom: 10,
   },
+  hBrand: { fontSize: 30, fontWeight: '900', letterSpacing: -0.5, color: colors.guardian },
+  menuBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: 'center', justifyContent: 'center', backgroundColor: colors.guardian + '18',
+  },
+  menuIcon: { fontSize: 16, color: colors.guardian },
+  menuBg: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.3)' },
+  menuPanel: {
+    position: 'absolute', top: 0, right: 0, bottom: 0, width: 240,
+    backgroundColor: '#fff', paddingTop: 60, paddingHorizontal: 8,
+    shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 20, shadowOffset: { width: -4, height: 0 }, elevation: 16,
+  },
+  menuPanelTitle: { fontSize: 18, fontWeight: '800', color: '#1E293B', paddingHorizontal: 12, marginBottom: 8 },
+  menuRow: { paddingVertical: 18, paddingHorizontal: 12 },
+  menuRowText: { fontSize: 16, fontWeight: '600', color: '#1E293B' },
+  menuDivider: { height: 1, backgroundColor: '#F1F5F9' },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   headerIcon: { fontSize: 18 },
   headerTitle: { color: colors.white, fontWeight: '700', fontSize: 15 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   smsTestBtn: {
-    backgroundColor: 'rgba(255,255,255,0.25)',
-    borderRadius: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  smsTestText: { color: colors.white, fontSize: 11, fontWeight: '700' },
-  logoutBtn: {
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: colors.guardian + '18',
     borderRadius: 20,
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 7,
   },
-  logoutText: { color: colors.white, fontSize: 12, fontWeight: '700' },
+  smsTestText: { color: colors.guardian, fontSize: 11, fontWeight: '800' },
+  logoutBtn: {
+    backgroundColor: colors.guardian + '18',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  logoutText: { color: colors.guardian, fontSize: 12, fontWeight: '800' },
 
   loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   loadingText: { color: '#94A3B8', fontSize: 13 },
@@ -462,36 +450,37 @@ const styles = StyleSheet.create({
 
   sectionTitle: { fontSize: 13, fontWeight: '800', color: colors.primary },
 
-  /* 현재 일과 */
+  /* 현재 일과 — 당사자 메인처럼 크게 */
   currentCard: {
     backgroundColor: colors.white,
-    borderRadius: 18,
-    padding: 18,
+    borderRadius: 22,
+    paddingVertical: 26,
+    paddingHorizontal: 22,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderLeftWidth: 5,
+    borderLeftWidth: 6,
     borderLeftColor: colors.guardian,
     elevation: 4,
     shadowColor: colors.guardian,
     shadowOpacity: 0.12,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 5 },
   },
-  currentLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  currentLeft: { flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 },
   liveDot: {
-    width: 10, height: 10, borderRadius: 5,
+    width: 12, height: 12, borderRadius: 6,
     backgroundColor: colors.guardian,
   },
-  currentTime: { fontSize: 11, color: '#94A3B8', fontWeight: '600', marginBottom: 2 },
-  currentTitle: { fontSize: 18, fontWeight: '900', color: colors.primary },
+  currentTime: { fontSize: 14, color: '#94A3B8', fontWeight: '700', marginBottom: 4 },
+  currentTitle: { fontSize: 28, fontWeight: '900', color: colors.primary },
   inProgressBadge: {
     backgroundColor: '#D1FAE5',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
   },
-  inProgressText: { fontSize: 12, fontWeight: '700', color: '#065F46' },
+  inProgressText: { fontSize: 13, fontWeight: '800', color: '#065F46' },
 
   emptyCard: {
     backgroundColor: colors.white,
@@ -633,12 +622,77 @@ const styles = StyleSheet.create({
 
   /* 내일 스케줄 */
   tomorrowCard: {
-    backgroundColor: colors.primary,
+    backgroundColor: colors.white,
     borderRadius: 18,
-    padding: 16,
-    gap: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 4,
+    elevation: 2, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 2 },
   },
-  tItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 5, gap: 10 },
-  tTime: { color: '#93C5FD', fontWeight: '700', fontSize: 11, width: 70 },
-  tLabel: { flex: 1, fontSize: 12, color: '#BFDBFE' },
+  tItem: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 11,
+    borderBottomWidth: 1, borderBottomColor: '#F1F5F9',
+  },
+  tItemLast: { borderBottomWidth: 0 },
+  tTime: { color: colors.guardian, fontWeight: '800', fontSize: 13, width: 76 },
+  tLabel: { flex: 1, fontSize: 15, color: '#334155', fontWeight: '600' },
+
+  // 적합도 히트맵
+  sectionSub: { fontSize: 11, color: '#94A3B8', fontWeight: '600' },
+  heatCard: {
+    backgroundColor: colors.white, borderRadius: 18, padding: 14,
+    elevation: 2, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 2 },
+  },
+  heatRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 3 },
+  heatNameCol: { width: 76 },
+  heatName: { width: 76, fontSize: 13, fontWeight: '700', color: '#334155', paddingRight: 6 },
+  heatColLabel: { flex: 1, textAlign: 'center', fontSize: 11, fontWeight: '700', color: '#94A3B8' },
+  heatCellWrap: { flex: 1, alignItems: 'center' },
+  heatCell: { width: 26, height: 26, borderRadius: 7 },
+  heatLegend: {
+    flexDirection: 'row', justifyContent: 'center', flexWrap: 'wrap', gap: 14,
+    marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#F1F5F9',
+  },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  legendDot: { width: 12, height: 12, borderRadius: 4 },
+  legendText: { fontSize: 11, fontWeight: '600', color: '#64748B' },
+
+  // 상단 요약 카드
+  summaryCard: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: colors.white, borderRadius: 18, paddingVertical: 18, paddingHorizontal: 8,
+    marginBottom: 6,
+    elevation: 3, shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 10, shadowOffset: { width: 0, height: 3 },
+  },
+  summaryItem: { flex: 1, alignItems: 'center', gap: 4, paddingVertical: 4, borderRadius: 12 },
+  summaryItemActive: { backgroundColor: colors.guardian + '12' },
+  summaryValue: { fontSize: 24, fontWeight: '900', color: colors.primary },
+  summaryLabel: { fontSize: 11, fontWeight: '700', color: '#94A3B8' },
+  summaryDivider: { width: 1, height: 34, backgroundColor: '#EEF1F8' },
+  summaryHint: { fontSize: 11, color: '#94A3B8', fontWeight: '600', textAlign: 'center', marginTop: -4 },
+  expandCard: {
+    backgroundColor: colors.white, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 6, marginTop: -4,
+    elevation: 2, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 2 },
+  },
+  tapHint: { fontSize: 11, color: '#94A3B8', fontWeight: '600', textAlign: 'right', marginTop: 6 },
+
+  // 상세 모달 (요약 타일 탭)
+  detailBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
+  detailSheet: {
+    backgroundColor: '#F8FAFC', borderTopLeftRadius: 26, borderTopRightRadius: 26,
+    padding: 18, paddingBottom: 36, maxHeight: '82%',
+  },
+  sheetHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: '#CBD5E1', alignSelf: 'center', marginBottom: 14 },
+  detailHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+  detailTitle: { fontSize: 18, fontWeight: '900', color: colors.primary },
+  detailX: { fontSize: 18, color: '#94A3B8', fontWeight: '700' },
+
+  // 자기평가 카드
+  moodCard: {
+    backgroundColor: colors.white, borderRadius: 16, padding: 16,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    elevation: 2, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 2 },
+  },
+  moodCardLabel: { fontSize: 13, fontWeight: '800', color: colors.primary },
+  moodCardValue: { fontSize: 16, fontWeight: '900', color: '#334155' },
 });

@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "frontend",
+    "name": "Routy",
     "slug": "frontend",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -18,7 +18,7 @@
         "NSSpeechRecognitionUsageDescription": "음성을 텍스트로 변환하기 위해 필요합니다.",
         "NSMicrophoneUsageDescription": "마이크를 사용해 말씀해 주세요."
       },
-      "bundleIdentifier": "com.anonymous.frontend"
+      "bundleIdentifier": "com.yujunlee.careagent"
     },
     "android": {
       "adaptiveIcon": {

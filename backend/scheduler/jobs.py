@@ -10,11 +10,12 @@ from apscheduler.triggers.date import DateTrigger
 from datetime import timedelta
 from sqlalchemy.orm import Session
 from models.database import (
-    SessionLocal, User, Schedule, ScheduleLog, ScheduleStatus,
+    SessionLocal, User, Guardian, Schedule, ScheduleLog, ScheduleStatus,
     DisabilityLevel, DailyReport
 )
 from agents.tools.messaging import send_message
 from agents.care_agent import chat as agent_chat
+from services.push import send_push
 from datetime import datetime, date
 import logging
 
@@ -73,8 +74,8 @@ async def trigger_schedule_notification(user_id: int, schedule_id: int, title: s
 async def send_daily_report():
     """매일 밤 22:00 - 일과 종료 AI 분석 + DailyReport 저장"""
     db = SessionLocal()
-    today = date.today().isoformat()
-    today_dow = str(datetime.now().weekday())
+    from timeutil import kst_now
+    today = kst_now().date().isoformat()
 
     try:
         users = _get_active_users(db)
@@ -87,27 +88,17 @@ async def send_daily_report():
             if existing and existing.is_complete:
                 continue
 
-            # 오늘 스케줄 (요일 필터)
-            all_schedules = db.query(Schedule).filter(
-                Schedule.user_id == user.id,
-                Schedule.is_active == True
-            ).order_by(Schedule.scheduled_time).all()
-            today_schedules = [s for s in all_schedules if today_dow in s.days_of_week.split(",")]
+            # 달성 현황 (단일 로직)
+            from services.achievement import today_achievement
+            ach = today_achievement(user.id, db)
+            today_schedules = ach["schedules"]
+            log_map = ach["log_map"]
 
             if not today_schedules:
                 continue
 
-            # ScheduleLog에서 달성 현황 수집
-            schedule_ids = [s.id for s in today_schedules]
-            today_start = datetime.combine(date.today(), datetime.min.time())
-            logs = db.query(ScheduleLog).filter(
-                ScheduleLog.schedule_id.in_(schedule_ids),
-                ScheduleLog.log_date >= today_start
-            ).all()
-            log_map = {l.schedule_id: l for l in logs}
-
-            achieved_count = sum(1 for l in logs if l.status == ScheduleStatus.ACHIEVED)
-            total_count = len(today_schedules)
+            achieved_count = ach["achieved"]
+            total_count = ach["total"]
             missed = [s.title for s in today_schedules
                       if log_map.get(s.id) and log_map[s.id].status == ScheduleStatus.MISSED]
             schedule_summary = ", ".join([f"{s.scheduled_time} {s.title}" for s in today_schedules])
@@ -192,6 +183,96 @@ def schedule_stage3_followup(user_id: int, delay_minutes: int = 60):
     logger.info(f"[stage3 followup] 예약 user={user_id} 실행시각={run_at.isoformat()}")
 
 
+# ── 취침 1시간 전: 보호자에게 다음날 스케줄 추천 푸시 ──────────────────────────
+SLEEP_KW = ["취침", "수면", "자기", "잠"]
+
+
+def _find_bedtime(user_id: int, db: Session) -> str | None:
+    """사용자 스케줄에서 취침 관련 일과의 가장 이른 시각(HH:MM) 반환."""
+    scheds = db.query(Schedule).filter(
+        Schedule.user_id == user_id, Schedule.is_active == True
+    ).all()
+    times = [s.scheduled_time for s in scheds if any(k in s.title for k in SLEEP_KW)]
+    return min(times) if times else None
+
+
+async def notify_guardian_tomorrow_recommendation(user_id: int):
+    """취침 1시간 전 — 보호자에게 내일 일과 + AI 추천 푸시"""
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        guardian = db.query(Guardian).filter(Guardian.user_id == user_id).first()
+        if not user or not guardian:
+            return
+
+        # 내일 일과
+        tomorrow_idx = (datetime.today().weekday() + 1) % 7
+        all_s = db.query(Schedule).filter(
+            Schedule.user_id == user_id, Schedule.is_active == True
+        ).all()
+        tomorrow = sorted(
+            [s for s in all_s if str(tomorrow_idx) in [d.strip() for d in s.days_of_week.split(',')]],
+            key=lambda x: x.scheduled_time,
+        )
+        sched_text = ", ".join(f"{s.scheduled_time} {s.title}" for s in tomorrow) or "등록된 일과 없음"
+
+        # 오늘 미수행 일과
+        today_dow = str(datetime.now().weekday())
+        today_start = datetime.combine(date.today(), datetime.min.time())
+        today_s = [s for s in all_s if today_dow in s.days_of_week.split(',')]
+        logs = db.query(ScheduleLog).filter(
+            ScheduleLog.schedule_id.in_([s.id for s in today_s]),
+            ScheduleLog.log_date >= today_start,
+        ).all() if today_s else []
+        log_map = {l.schedule_id: l for l in logs}
+        missed = [s.title for s in today_s
+                  if log_map.get(s.id) and log_map[s.id].status == ScheduleStatus.MISSED]
+        missed_text = (", ".join(missed)) if missed else "없음"
+
+        # AI 추천 (Gemma)
+        prompt = (
+            f"보호자에게 보낼 짧은 안내를 2문장 이내 존댓말로 작성하세요. "
+            f"{user.name}님의 내일 일과: {sched_text}. "
+            f"오늘 미수행 일과: {missed_text}. "
+            f"내일을 위한 조정 제안 한 가지를 부드럽게 포함하세요."
+        )
+        rec = ""
+        try:
+            result = agent_chat(user_id=user_id, message=prompt)
+            rec = (result.get("reply") or "").strip()
+        except Exception as e:
+            logger.error(f"[취침전추천] AI 오류 user={user_id}: {e}")
+
+        body = (rec or f"내일 {user.name}님 일과: {sched_text}")[:170]
+        send_push(guardian.push_token, "내일 일과 추천", body, {"screen": "GuardianReport"})
+        logger.info(f"[취침전추천] user={user_id} 발송")
+    finally:
+        db.close()
+
+
+def register_bedtime_jobs(db: Session):
+    """각 사용자의 취침 1시간 전에 보호자 추천 푸시 잡 등록."""
+    users = _get_active_users(db)
+    for user in users:
+        bedtime = _find_bedtime(user.id, db)
+        if not bedtime:
+            continue
+        h, m = map(int, bedtime.split(":"))
+        total = (h * 60 + m - 60) % (24 * 60)  # 1시간 전
+        rh, rm = divmod(total, 60)
+        job_id = f"bedtime_rec_{user.id}"
+        if scheduler.get_job(job_id):
+            scheduler.remove_job(job_id)
+        scheduler.add_job(
+            notify_guardian_tomorrow_recommendation,
+            CronTrigger(hour=rh, minute=rm),
+            args=[user.id],
+            id=job_id,
+            replace_existing=True,
+        )
+        logger.info(f"[등록] bedtime_rec user={user.id} at {rh:02d}:{rm:02d} (취침 {bedtime} 1시간 전)")
+
+
 def register_schedule_jobs(db: Session):
     """DB에 있는 스케줄들을 APScheduler에 등록"""
     users = _get_active_users(db)
@@ -244,6 +325,7 @@ def init_scheduler():
     db = SessionLocal()
     try:
         register_schedule_jobs(db)
+        register_bedtime_jobs(db)
     finally:
         db.close()
 

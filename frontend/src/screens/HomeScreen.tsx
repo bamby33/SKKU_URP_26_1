@@ -84,7 +84,7 @@ export default function HomeScreen({ navigation }: Props) {
           <TouchableOpacity
             style={styles.cardUser}
             activeOpacity={0.85}
-            onPress={() => navigation.navigate('PersonInfo', { role: 'user' })}
+            onPress={() => navigation.navigate('PersonInfo')}
           >
             <Text style={styles.cardEmoji}>😊</Text>
             <View style={styles.cardTextArea}>
@@ -98,7 +98,7 @@ export default function HomeScreen({ navigation }: Props) {
           <TouchableOpacity
             style={styles.cardGuardian}
             activeOpacity={0.85}
-            onPress={() => navigation.navigate('PersonInfo', { role: 'guardian' })}
+            onPress={() => navigation.navigate('PersonInfo')}
           >
             <Text style={styles.cardEmoji}>👨‍👩‍👧</Text>
             <View style={styles.cardTextArea}>

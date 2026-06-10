@@ -17,13 +17,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
 import { sendChat, api } from '../../api/client';
+import { cleanForSpeech, cleanForDisplay } from '../../utils/text';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'AIChat'>;
   route: RouteProp<RootStackParamList, 'AIChat'>;
 };
 
-type FollowupPhase = 'ask' | 'why' | 'done' | null;
 
 type Message = {
   id: number;
@@ -112,8 +112,6 @@ export default function AIChatScreen({ navigation, route }: Props) {
   const [listening,     setListening]     = useState(false);
   const [aiLoading,     setAiLoading]     = useState(false);
   const [inputText,     setInputText]     = useState('');
-  const [followupPhase, setFollowupPhase] = useState<FollowupPhase>(null);
-  const whyRespondedRef        = useRef(false);
   const behaviorReturnedRef    = useRef(false); // 중복 복귀 방지
   const behaviorNoteRef        = useRef(false); // 팔로업 원인 저장 여부
   const behaviorRecRef     = useRef<import('expo-av').Audio.Recording | null>(null);
@@ -142,18 +140,11 @@ export default function AIChatScreen({ navigation, route }: Props) {
       const col = await AsyncStorage.getItem('theme_color');
       if (col) setTheme(col);
 
-      const followUp    = route.params?.followUpSchedule;
       const isBehavior  = route.params?.behaviorAlert;
       const isFollowup  = route.params?.behaviorFollowup;
-
       const isStage1 = route.params?.behaviorStage1;
 
-      if (followUp) {
-        const msg = `${followUp} 하셨나요? 😊`;
-        setMessages([{ id: 0, role: 'assistant', content: msg }]);
-        setFollowupPhase('ask');
-        speakWithMeter(msg);
-      } else if (isStage1) {
+      if (isStage1) {
         const msg = '지금 힘드세요? 😊 무엇이든 이야기해줘도 돼요';
         setMessages([{ id: 0, role: 'assistant', content: msg }]);
         speakWithMeter(msg);
@@ -217,7 +208,9 @@ export default function AIChatScreen({ navigation, route }: Props) {
   // 음성 재생 + 종료 후 1분 타이머
   const speakWithMeter = (text: string) => {
     if (meterStopTimerRef.current) { clearTimeout(meterStopTimerRef.current); meterStopTimerRef.current = null; }
-    Speech.speak(text, { language: 'ko-KR', onDone: resetMeterTimer });
+    const spoken = cleanForSpeech(text);
+    if (!spoken) { resetMeterTimer(); return; }
+    Speech.speak(spoken, { language: 'ko-KR', onDone: resetMeterTimer });
   };
 
   useEffect(() => {
@@ -270,16 +263,6 @@ export default function AIChatScreen({ navigation, route }: Props) {
     setMessages(prev => prev.map(m => m.id === msgId ? { ...m, choices: undefined, aacButtons: undefined } : m));
   };
 
-  const DONE_KW     = ['응', '네', '했어', '했어요', '했습니다', '완료', '했다', '했죠', '했는데', '했거든'];
-  const MISSED_KW   = ['아니', '못', '안 했', '안했', '못했', '아직', '못 했'];
-
-  const detectAchieved = (text: string): 'achieved' | 'missed' | null => {
-    const t = text.trim();
-    if (MISSED_KW.some(k => t.includes(k))) return 'missed';
-    if (DONE_KW.some(k => t.includes(k))) return 'achieved';
-    return null;
-  };
-
   const handleSend = async (text: string, fromMsgId?: number) => {
     if (!userId || aiLoading || !text.trim()) return;
 
@@ -294,21 +277,6 @@ export default function AIChatScreen({ navigation, route }: Props) {
       api.post(`/chat/save-behavior-note/${userId}`, { note: text }).catch(() => {});
     }
 
-    // followup ask 단계: 유저 발화에서 했는지 파악
-    let detectedResult: 'achieved' | 'missed' | null = null;
-    if (followupPhase === 'ask') {
-      detectedResult = detectAchieved(text);
-      if (detectedResult === 'missed') {
-        setFollowupPhase('why');
-        whyRespondedRef.current = false;
-        // note는 이유를 들은 후에 저장 (아래 why 단계에서 처리)
-      } else if (detectedResult === 'achieved') {
-        setFollowupPhase('done');
-        const followId = route.params?.followUpId;
-        if (followId) api.post('/schedules/check', { schedule_id: followId, achieved: true }).catch(() => {});
-      }
-    }
-
     try {
       // 현재 dB + 행동 초기 진입 여부를 함께 전송 → 백엔드에서 text+dB 조합 판단
       const currentDb = currentDbRef.current;
@@ -319,40 +287,13 @@ export default function AIChatScreen({ navigation, route }: Props) {
       const res = await sendChat(userId, text, Object.keys(chatContext).length ? chatContext : undefined);
       const { reply, stage, feedback } = res.data;
       if (reply) {
-        const newMsg: Message = { id: Date.now() + 1, role: 'assistant', content: reply };
+        const newMsg: Message = { id: Date.now() + 1, role: 'assistant', content: cleanForDisplay(reply) };
         if (stage === 'stage_1' && feedback) {
           newMsg.choices    = feedback.choices    ?? undefined;
           newMsg.aacButtons = feedback.aac_buttons ?? undefined;
         }
         setMessages(prev => [...prev, newMsg]);
         speakWithMeter(reply);
-      }
-
-      // 달성 확인 후 달성률 조회 → 메인 복귀
-      if (detectedResult === 'achieved') {
-        let rate = 0;
-        try {
-          const r = await api.get(`/schedules/user/${userId}/today-report`);
-          rate = r.data.achievement_rate ?? 0;
-        } catch {}
-        setTimeout(() => navigation.navigate('Schedule', { justAchieved: true, achieveRate: rate }), 2500);
-      }
-
-      // 못했어요 이유 들은 뒤 → note 포함해서 저장 + 보호자 알림 + 메인 복귀
-      if (followupPhase === 'why' && !whyRespondedRef.current) {
-        whyRespondedRef.current = true;
-        setFollowupPhase('done');
-        const followId = route.params?.followUpId;
-        if (followId) {
-          api.post('/schedules/check', {
-            schedule_id: followId, achieved: false, note: text,
-          }).catch(() => {});
-        }
-        api.post(`/guardian/user/${userId}/missed-schedule`, {
-          schedule_title: route.params?.followUpSchedule ?? '',
-          reason: text,
-        }).catch(() => {});
-        setTimeout(() => navigation.navigate('Schedule', {}), 3000);
       }
 
       if (stage === 'stage_2') {
@@ -549,7 +490,7 @@ export default function AIChatScreen({ navigation, route }: Props) {
 
 // ── 스타일 ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#F4FAF7' },
+  root: { flex: 1, backgroundColor: '#F4F6FB' },
 
   header: {
     flexDirection: 'row', alignItems: 'center',
@@ -598,6 +539,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16, paddingTop: 12, paddingBottom: 16,
     gap: 12,
   },
+  quickRow: { flexDirection: 'row', gap: 10 },
+  quickBtn: {
+    flex: 1, paddingVertical: 15, borderRadius: 14, alignItems: 'center', justifyContent: 'center',
+    elevation: 2, shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+  },
+  quickNo: { flex: 0.7, backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#E2E8F0' },
+  quickNoText: { fontSize: 15, fontWeight: '800', color: '#94A3B8' },
+  quickYesText: { fontSize: 17, fontWeight: '900', color: '#fff' },
   textRow: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
   },

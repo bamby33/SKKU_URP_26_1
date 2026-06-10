@@ -218,7 +218,7 @@ export default function TodayScheduleEditScreen({ navigation }: Props) {
       {isGuardian && (
         <View style={styles.guardianBanner}>
           <Text style={styles.guardianBannerText}>
-            🔔 보호자 모드 · 수정 내용은 당사자 수락 후 반영돼요
+            보호자 모드 · 수정 내용은 당사자 수락 후 반영돼요
           </Text>
         </View>
       )}
@@ -260,7 +260,7 @@ export default function TodayScheduleEditScreen({ navigation }: Props) {
           >
             {saving
               ? <ActivityIndicator color="#fff" />
-              : <Text style={styles.submitText}>📨 당사자에게 변경 요청 보내기</Text>
+              : <Text style={styles.submitText}>당사자에게 변경 요청 보내기</Text>
             }
           </TouchableOpacity>
         </View>
@@ -327,7 +327,7 @@ export default function TodayScheduleEditScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4FAF7' },
+  container: { flex: 1, backgroundColor: '#F4F6FB' },
 
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
