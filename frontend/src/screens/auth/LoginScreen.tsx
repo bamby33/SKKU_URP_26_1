@@ -74,7 +74,6 @@ export default function LoginScreen({ navigation, route }: Props) {
                   onPress={() => navigation.navigate('PINLogin')}
                   activeOpacity={0.85}
                 >
-                  <Text style={styles.roleEmoji}>😊</Text>
                   <Text style={styles.roleTitle}>나</Text>
                 </TouchableOpacity>
 
@@ -83,7 +82,6 @@ export default function LoginScreen({ navigation, route }: Props) {
                   onPress={() => setStep('guardian')}
                   activeOpacity={0.85}
                 >
-                  <Text style={styles.roleEmoji}>👪</Text>
                   <Text style={[styles.roleTitle, styles.roleTitleGuardian]}>보호자</Text>
                 </TouchableOpacity>
               </View>
@@ -95,7 +93,6 @@ export default function LoginScreen({ navigation, route }: Props) {
             <View style={styles.guardianArea}>
               <Text style={styles.brand}>Routy</Text>
               <Text style={styles.fallbackTitle}>보호자 로그인</Text>
-              <Text style={styles.fallbackDesc}>아이디와 비밀번호를 입력해주세요</Text>
 
               <View style={styles.fieldGroup}>
                 <Text style={styles.fieldLabel}>아이디</Text>
@@ -152,7 +149,7 @@ export default function LoginScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4F6FB' },
+  container: { flex: 1, backgroundColor: '#FFFFFF' },
   header: { paddingHorizontal: 20, paddingTop: 12 },
   backBtn: {
     alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center',

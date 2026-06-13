@@ -40,6 +40,21 @@ def apply_shorten_suggestion(data: ApplyShortenRequest, db: Session = Depends(ge
     return {"ok": True, "updated": n}
 
 
+class ApplyRestRequest(BaseModel):
+    user_id: int
+    rest_start: str
+    rest_end: str
+    days_of_week: str
+
+
+@router.post("/apply-rest")
+def apply_rest_suggestion(data: ApplyRestRequest, db: Session = Depends(get_db)):
+    """휴식 자동 삽입 제안 적용 — rest 일과 생성."""
+    from services.optimize import apply_rest
+    n = apply_rest(data.user_id, data.rest_start, data.rest_end, data.days_of_week, db)
+    return {"ok": True, "created": n}
+
+
 START_H = 6
 TOTAL_SLOTS = 32  # 06:00 ~ 22:00
 
@@ -165,7 +180,7 @@ def suggest_schedule(user_id: int, db: Session = Depends(get_db)):
 
 아래 JSON 배열 형식으로만 응답하세요. 다른 설명은 절대 포함하지 마세요:
 [
-  {{"day": 0, "start": "07:00", "end": "07:30", "name": "기상·세면", "emoji": "🌅", "color": "#FFB74D"}},
+  {{"day": 0, "start": "07:00", "end": "07:30", "name": "기상·세면", "emoji": "🌅", "color": "#FFB74D", "category": "routine"}},
   ...
 ]
 
@@ -175,6 +190,12 @@ def suggest_schedule(user_id: int, db: Session = Depends(get_db)):
 - start/end: "HH:MM" 형식, 06:00~22:00 범위
 - emoji: 일과를 가장 잘 표현하는 이모지 하나
 - color: 반드시 이 중 하나 선택 "#FFB74D" "#4CAF7D" "#AB77E8" "#6B9BF2" "#5BB7C0" "#E57373" "#26C6DA" "#AED581" "#FF8A65"
+- category: 반드시 아래 5개 중 하나
+  · productive : 성취·발달 활동 (숙제, 자습, 독서, 그림, 운동, 요리, 청소)
+  · routine    : 매일 하는 건강·위생 (기상·세면, 식사, 목욕, 약 복용, 산책)
+  · fixed      : 외부 기관 방문 (복지관, 학교, 병원, 치료)
+  · sleep      : 취침
+  · rest       : 휴식·자유시간 (놀이, 여가)
 """
 
     try:
@@ -211,6 +232,7 @@ def suggest_schedule(user_id: int, db: Session = Depends(get_db)):
             color = item.get("color", "#4CAF7D")
             if color not in valid_colors:
                 color = "#4CAF7D"
+            from services.category import normalize_category
             blocks.append({
                 "day": int(item["day"]),
                 "startSlot": ss,
@@ -218,6 +240,7 @@ def suggest_schedule(user_id: int, db: Session = Depends(get_db)):
                 "name": item["name"],
                 "emoji": item.get("emoji", "📋"),
                 "color": color,
+                "category": normalize_category(item.get("category"), item["name"]),
             })
         except (KeyError, ValueError):
             continue

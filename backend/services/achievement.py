@@ -78,7 +78,8 @@ def record_start(schedule: Schedule, response_type: str, db: Session) -> Schedul
 
 def record_stop(schedule: Schedule, db: Session, achieved: bool = True,
                 early_stop: bool = False, duration_min: int | None = None,
-                note: str | None = None) -> ScheduleLog:
+                note: str | None = None, transition_delay_min: int | None = None,
+                next_schedule_id: int | None = None) -> ScheduleLog:
     """일과 종료('그만할래요'/완료) 기록 — 종료 시각·실제 진행시간·조기종료 여부."""
     log = _today_log(schedule, db)
     log.status = ScheduleStatus.ACHIEVED if achieved else ScheduleStatus.MISSED
@@ -86,6 +87,10 @@ def record_stop(schedule: Schedule, db: Session, achieved: bool = True,
     log.early_stop = early_stop
     log.user_id = schedule.user_id
     log.log_date = kst_now()
+    # 전환 지연(Phase 3): 정상 완료('다 했어요')에서만 측정. 중도포기(early_stop)는 측정 안 함
+    if not early_stop and transition_delay_min is not None:
+        log.transition_delay_min = transition_delay_min
+        log.next_schedule_id = next_schedule_id
     if note is not None:
         log.note = note
     if duration_min is not None:
@@ -131,11 +136,14 @@ def schedule_suitability(user_id: int, db: Session, days: int = 7) -> list[dict]
         key = _norm(s.title)
         g = groups.get(key)
         if not g:
-            groups[key] = {"ids": [s.id], "time": s.scheduled_time, "title": s.title}
+            groups[key] = {"ids": [s.id], "time": s.scheduled_time, "end": s.end_time,
+                           "title": s.title, "category": s.category}
         else:
             g["ids"].append(s.id)
             if s.scheduled_time < g["time"]:
                 g["time"] = s.scheduled_time
+                g["end"] = s.end_time
+                g["category"] = s.category
 
     out = []
     for g in groups.values():
@@ -148,11 +156,37 @@ def schedule_suitability(user_id: int, db: Session, days: int = 7) -> list[dict]
         early  = sum(1 for l in logs if l.status == ScheduleStatus.ACHIEVED and l.early_stop)
         missed = sum(1 for l in logs if l.status == ScheduleStatus.MISSED)
 
+        # 예상보다 오래 걸림: 실제 진행시간 > 예정 시간(end-start)
+        planned = None
+        if g.get("end"):
+            try:
+                sh, sm = g["time"].split(":"); eh, em = g["end"].split(":")
+                planned = (int(eh) * 60 + int(em)) - (int(sh) * 60 + int(sm))
+            except Exception:
+                planned = None
+        over_durs = [l.actual_duration_min - planned for l in logs
+                     if l.actual_duration_min and planned and l.actual_duration_min > planned]
+        over = len(over_durs)
+        over_avg = round(sum(over_durs) / len(over_durs)) if over_durs else 0
+
         trans = db.query(ScheduleTransition).filter(
             ScheduleTransition.to_schedule_id.in_(ids), ScheduleTransition.log_date >= since
         ).all()
         tn = len(trans)
         refused = sum(1 for t in trans if t.result in ("refused", "no_response"))
+
+        # ── Phase 4: 전환지연(이 일과 '다 했어요' → 다음 일과 시각) ──
+        delays = [l.transition_delay_min for l in logs if l.transition_delay_min is not None]
+        delay_avg = round(sum(delays) / len(delays)) if delays else 0
+        delay_high = sum(1 for d in delays if d > 10)        # 전환지연 10분 초과
+        delay_high_repeat = delay_high >= 2                  # 반복(2회 이상)
+
+        # ── Phase 4: 도전행동(2·3단계) — dB 높음/격한표현 위기신호 ──
+        from models.database import BehaviorLog, FeedbackStage
+        crisis = db.query(BehaviorLog).filter(
+            BehaviorLog.schedule_id.in_(ids), BehaviorLog.logged_at >= since,
+            BehaviorLog.stage.in_([FeedbackStage.STAGE_2, FeedbackStage.STAGE_3]),
+        ).count()
 
         if n == 0:
             grade = "unknown"
@@ -160,10 +194,13 @@ def schedule_suitability(user_id: int, db: Session, days: int = 7) -> list[dict]
             full_ratio   = full / n
             missed_ratio = missed / n
             refuse_ratio = (refused / tn) if tn else 0
-            if full_ratio >= 0.6 and missed_ratio < 0.2:
-                grade = "green"
-            elif missed_ratio >= 0.4 or full_ratio < 0.25 or (tn >= 3 and refuse_ratio >= 0.6):
+            # 🔴 도전행동(2단계) 발생  /  미수행·거절 과다  →  빨강
+            if crisis >= 1 or missed_ratio >= 0.4 or full_ratio < 0.25 or (tn >= 3 and refuse_ratio >= 0.6):
                 grade = "red"
+            # 🟢 자연 종료 위주 + 전환지연 양호  →  초록
+            elif full_ratio >= 0.6 and missed_ratio < 0.2 and not delay_high_repeat and delay_avg <= 0:
+                grade = "green"
+            # 🟡 중도포기 OR 전환지연 반복(>10)  →  노랑
             else:
                 grade = "yellow"
 
@@ -182,15 +219,62 @@ def schedule_suitability(user_id: int, db: Session, days: int = 7) -> list[dict]
                 st = "none"
             cells.append({"label": WEEKDAY[ds.weekday()], "status": st})
 
+        # 부정 연속(최근일부터 yellow/red가 연달아) — 3일 이상이면 보호자 재검토 권고
+        neg_streak = 0
+        for c in reversed(cells):
+            if c["status"] in ("yellow", "red"):
+                neg_streak += 1
+            elif c["status"] == "none":
+                continue  # 기록 없는 날은 끊지 않고 건너뜀
+            else:
+                break
+        needs_review = grade == "red" or neg_streak >= 3
+
+        notes = [l.note for l in logs if l.note]
         out.append({
             "schedule_id": ids[0], "title": g["title"], "time": g["time"],
+            "category": g.get("category") or "routine",
             "grade": grade, "days": n,
             "completed_full": full, "early_stop": early, "missed": missed,
-            "refused_transitions": refused,
+            "refused_transitions": refused, "over": over, "over_avg": over_avg,
+            "delay_avg": delay_avg, "delay_high": delay_high, "crisis": crisis,
+            "needs_review": needs_review,
+            "reason": (notes[-1] if notes else None),
             "cells": cells,
         })
 
     out.sort(key=lambda x: x["time"])
+    return out
+
+
+def weekly_rates(user_id: int, db: Session, days: int = 7) -> list[dict]:
+    """최근 N일 일과 달성률 (꺾은선 그래프용). [{label, rate, has}] 오래된→오늘."""
+    from datetime import timedelta
+    WEEKDAY = ['월', '화', '수', '목', '금', '토', '일']
+    today0 = kst_today_start()
+    all_s = db.query(Schedule).filter(
+        Schedule.user_id == user_id, Schedule.is_active == True
+    ).all()
+    out = []
+    for i in range(days - 1, -1, -1):
+        ds = today0 - timedelta(days=i)
+        de = ds + timedelta(days=1)
+        dow = str(ds.weekday())
+        day_scheds = [s for s in all_s if dow in [d.strip() for d in s.days_of_week.split(',')]]
+        ids = [s.id for s in day_scheds]
+        total = len(day_scheds)
+        label = WEEKDAY[ds.weekday()]
+        if total == 0:
+            out.append({"label": label, "rate": 0, "has": False})
+            continue
+        logs = db.query(ScheduleLog).filter(
+            ScheduleLog.schedule_id.in_(ids), ScheduleLog.log_date >= ds, ScheduleLog.log_date < de
+        ).order_by(ScheduleLog.log_date.asc()).all()
+        latest = {}
+        for l in logs:
+            latest[l.schedule_id] = l
+        achieved = sum(1 for sid in ids if latest.get(sid) and latest[sid].status == ScheduleStatus.ACHIEVED)
+        out.append({"label": label, "rate": round(achieved / total * 100), "has": True})
     return out
 
 

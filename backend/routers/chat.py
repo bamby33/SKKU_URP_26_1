@@ -52,6 +52,8 @@ class BehaviorLogRequest(BaseModel):
     stage: str                    # "stage_1" | "stage_2" | "stage_3"
     trigger: Optional[str] = None # "voice_decibel" | "text_refusal" | "manual" 등
     decibel: Optional[float] = None
+    schedule_id: Optional[int] = None   # 감지 당시 진행 중이던 일과
+    context: Optional[str] = None       # transition | in_activity | spontaneous
 
 class ChatRequest(BaseModel):
     user_id: int
@@ -94,13 +96,16 @@ def send_message(data: ChatRequest, db: Session = Depends(get_db)):
         "feedback_mode": user.feedback_mode or "voice",
     }
 
-    # 최근 7일 행동 로그 → 패턴 요약
-    seven_days_ago = datetime.now() - timedelta(days=7)
-    behavior_logs = db.query(BehaviorLog).filter(
-        BehaviorLog.user_id == data.user_id,
-        BehaviorLog.logged_at >= seven_days_ago,
-    ).order_by(BehaviorLog.logged_at.desc()).limit(20).all()
-    behavior_context = _build_behavior_context(behavior_logs)
+    # 최근 7일 행동 로그 → 패턴 요약. 단, 실제 행동 상황(behavior_stage)일 때만 주입.
+    # (평소 대화에 "선제적 공감" 지침이 들어가면 "안녕"에도 거부 가정으로 반사 응답하는 문제)
+    behavior_context = ""
+    if (data.context or {}).get("behavior_stage"):
+        seven_days_ago = datetime.now() - timedelta(days=7)
+        behavior_logs = db.query(BehaviorLog).filter(
+            BehaviorLog.user_id == data.user_id,
+            BehaviorLog.logged_at >= seven_days_ago,
+        ).order_by(BehaviorLog.logged_at.desc()).limit(20).all()
+        behavior_context = _build_behavior_context(behavior_logs)
 
     # AI 에이전트 호출
     try:
@@ -150,6 +155,8 @@ def log_behavior(user_id: int, data: BehaviorLogRequest, db: Session = Depends(g
         user_id=user_id,
         stage=stage_enum,
         trigger=data.trigger or "direct",
+        context=data.context,
+        schedule_id=data.schedule_id,
         decibel_level=data.decibel,
         logged_at=datetime.utcnow(),
     )
@@ -157,7 +164,7 @@ def log_behavior(user_id: int, data: BehaviorLogRequest, db: Session = Depends(g
     db.commit()
     db.refresh(log)
 
-    # stage_2: 보호자에게 자동 긴급 알림
+    # stage_2: 보호자에게 자동 긴급 알림 (SMS + 앱 푸시)
     if data.stage == "stage_2":
         from agents.tools.messaging import send_message
         send_message(
@@ -165,6 +172,16 @@ def log_behavior(user_id: int, data: BehaviorLogRequest, db: Session = Depends(g
             message_type="emergency",
             extra_info=f"음성 데시벨 감지{f': {data.decibel:.0f}dB' if data.decibel else ''}",
         )
+        from models.database import Guardian
+        from services.push import send_push
+        guardian = db.query(Guardian).filter(Guardian.user_id == user_id).first()
+        if guardian and guardian.push_token:
+            send_push(
+                guardian.push_token,
+                "문제행동 감지",
+                f"{user.name}님에게 문제행동이 감지됐어요. 확인해주세요.",
+                {"type": "behavior"},
+            )
 
     return {"success": True, "log_id": log.id, "stage": data.stage}
 

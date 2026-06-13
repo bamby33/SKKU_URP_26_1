@@ -61,7 +61,7 @@ def _get_stage1_feedback(user: User, schedule_title: str = None) -> dict:
             "choices": ["지금 할게요", "3분 뒤에 할게요"],
             "alternative_choice": f"세면대에서 할까요, 컵으로 할까요?",
             "task_breakdown": f"{task}의 첫 번째 단계만 해볼까요?",
-            "aac_buttons": ["쉬고 싶어요", "도와주세요", "싫어요"],
+            "aac_buttons": ["쉬고 싶어요", "도와주세요"],
             "tone": "calm_simple",
             "notify_guardian": False
         }
@@ -80,7 +80,7 @@ def _get_stage1_feedback(user: User, schedule_title: str = None) -> dict:
         return {
             "message": f"지금 할까요? 나중에 할까요?",
             "choices": ["네", "나중에요"],
-            "aac_buttons": ["싫어요", "도와주세요"],
+            "aac_buttons": ["쉬고 싶어요", "도와주세요"],
             "tone": "simple",
             "notify_guardian": False
         }

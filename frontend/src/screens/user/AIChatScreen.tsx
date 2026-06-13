@@ -11,6 +11,7 @@ import {
 import * as Speech from 'expo-speech';
 import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from 'expo-speech-recognition';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AppFrame from '../../components/AppFrame';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -18,6 +19,7 @@ import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
 import { sendChat, api } from '../../api/client';
 import { cleanForSpeech, cleanForDisplay } from '../../utils/text';
+import { notifState } from '../../utils/localNotify';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'AIChat'>;
@@ -112,14 +114,18 @@ export default function AIChatScreen({ navigation, route }: Props) {
   const [listening,     setListening]     = useState(false);
   const [aiLoading,     setAiLoading]     = useState(false);
   const [inputText,     setInputText]     = useState('');
+  const [helpTalk,      setHelpTalk]      = useState(false); // 1단계 '도와주세요' → 채팅 사유 대화 모드
   const behaviorReturnedRef    = useRef(false); // 중복 복귀 방지
   const behaviorNoteRef        = useRef(false); // 팔로업 원인 저장 여부
+  const autoSentRef            = useRef(false); // 백그라운드서 캡처한 말소리 자동 1회 전송
+  const lastSentRef            = useRef<{ text: string; t: number }>({ text: '', t: 0 }); // 중복 전송 방지
+  const reasonSubmittedRef     = useRef(false); // 사유 1회만 저장
   const behaviorRecRef     = useRef<import('expo-av').Audio.Recording | null>(null);
   const behaviorMeterRef   = useRef<ReturnType<typeof setInterval> | null>(null);
   const meterStopTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentDbRef       = useRef<number>(0);
   const calmCountRef       = useRef(0); // 기준 이하 연속 횟수
-  const DB_CALM = 55; // 이 값 이하로 지속되면 진정으로 판단
+  const DB_CALM = 60; // 이 값 이하로 30초 지속되면 진정으로 판단 (2단계 리다이렉트 기준)
   const METER_DURATION = 60000; // 음성 종료 후 1분
 
   // ── 음성 인식 ──────────────────────────────────────────────────────────────
@@ -127,12 +133,26 @@ export default function AIChatScreen({ navigation, route }: Props) {
   useSpeechRecognitionEvent('end',   () => setListening(false));
   useSpeechRecognitionEvent('error', () => setListening(false));
   useSpeechRecognitionEvent('result', e => {
+    // 행동 1·2단계는 버튼 전용 → 잔여 STT 무시. 단 '도와주세요' 채팅 모드(helpTalk)는 허용
+    if ((route.params?.behaviorAlert || route.params?.behaviorStage1) && !helpTalk) return;
     const txt = e.results[0]?.transcript ?? '';
     if (txt && e.isFinal) handleSend(txt);
   });
 
+  // 행동 채팅(1·2단계) 중에는 스케줄 배너 억제
+  useEffect(() => {
+    notifState.inBehaviorChat = !!(route.params?.behaviorAlert || route.params?.behaviorStage1);
+    return () => { notifState.inBehaviorChat = false; };
+  }, []);
+
   // ── 초기 로드 ──────────────────────────────────────────────────────────────
   useEffect(() => {
+    // 백그라운드 STT 잔여 결과가 같은 말을 또 보내는 중복 방지 (동기적으로 먼저 막음)
+    const sp0 = route.params?.spokenText;
+    if (sp0 && (route.params?.behaviorStage1 || route.params?.behaviorAlert)) {
+      lastSentRef.current = { text: sp0.trim(), t: Date.now() };
+      autoSentRef.current = true;
+    }
     (async () => {
       const stored = await AsyncStorage.getItem('user_id');
       const id = stored ? Number(stored) : null;
@@ -143,14 +163,32 @@ export default function AIChatScreen({ navigation, route }: Props) {
       const isBehavior  = route.params?.behaviorAlert;
       const isFollowup  = route.params?.behaviorFollowup;
       const isStage1 = route.params?.behaviorStage1;
+      const reason   = route.params?.reasonAsk;
 
-      if (isStage1) {
-        const msg = '지금 힘드세요? 😊 무엇이든 이야기해줘도 돼요';
+      if (reason) {
+        const nm = reason.title.replace(/\p{Extended_Pictographic}/gu, '').replace(/️/g, '').trim();
+        const msg = reason.kind === 'gaveup'
+          ? `${nm} 그만하고 싶었구나. 무슨 일 있었어? 편하게 말해줘 💙`
+          : `${nm} 지금 하기 싫구나. 왜 그런지 말해줄 수 있어? 😊`;
         setMessages([{ id: 0, role: 'assistant', content: msg }]);
         speakWithMeter(msg);
+      } else if (isStage1) {
+        // 1단계(선행사건 중재): 사용자가 한 말 먼저 → 선택지 2개 + AAC 즉시 (LLM 의존 X)
+        const spoken = route.params?.spokenText;
+        const msg = '지금 조금 힘든가요? 😊 이렇게 해볼까요?';
+        setMessages([
+          ...(spoken ? [{ id: 1, role: 'user' as const, content: spoken }] : []),
+          { id: 2, role: 'assistant', content: msg, choices: ['지금 해볼게요', '쉬고 싶어요'], aacButtons: ['도와주세요'] },
+        ]);
+        speakWithMeter(msg);
       } else if (isBehavior) {
-        const msg = '무슨 일이에요? 😊 괜찮아요, 저한테 이야기해줘도 돼요';
-        setMessages([{ id: 0, role: 'assistant', content: msg }]);
+        // 2단계 위기개입: 사용자 말 먼저 → "괜찮아요"만 (말 최소화). dB 안정 후 리다이렉트.
+        const spoken = route.params?.spokenText;
+        const msg = '괜찮아요.';
+        setMessages([
+          ...(spoken ? [{ id: 1, role: 'user' as const, content: spoken }] : []),
+          { id: 2, role: 'assistant', content: msg },
+        ]);
         speakWithMeter(msg);
       } else if (isFollowup) {
         const msg = '아까 무슨 일이 있었나요? 지금은 괜찮으신가요? 😊';
@@ -166,6 +204,17 @@ export default function AIChatScreen({ navigation, route }: Props) {
       toValue: 1, duration: 300, useNativeDriver: true,
     }).start();
   }, []);
+
+  // 백그라운드 감지에서 캡처한 말소리가 넘어왔으면 → userId 준비 후 1회 자동 전송
+  // (백엔드가 데시벨 + 실제 단어를 함께 받아 단계 판정)
+  useEffect(() => {
+    // 행동 모드(1·2단계)는 결정형 UI를 쓰므로 자동 전송 안 함 (LLM 끼어듦 방지)
+    if (userId && route.params?.spokenText && !autoSentRef.current
+        && !route.params?.behaviorAlert && !route.params?.behaviorStage1) {
+      autoSentRef.current = true;
+      handleSend(route.params.spokenText);
+    }
+  }, [userId]);
 
   // ── 마이크 링 펄스 ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -232,14 +281,18 @@ export default function AIChatScreen({ navigation, route }: Props) {
           const approxDB = (s.metering ?? -160) + 100;
           currentDbRef.current = approxDB;
 
-          // behaviorAlert 모드: 진정 감지 → 자동 복귀
+          // behaviorAlert(2단계): dB<60 이 30초 지속 확인 후에만 리다이렉트 (각성 중엔 침묵)
           if (route.params?.behaviorAlert) {
             if (approxDB < DB_CALM) {
               calmCountRef.current += 1;
-              if (calmCountRef.current >= 20 && !behaviorReturnedRef.current) {
+              if (calmCountRef.current >= 60 && !behaviorReturnedRef.current) { // 500ms*60 = 30초
                 behaviorReturnedRef.current = true;
-                await stopBehaviorMeter();
-                navigation.navigate('Schedule', { behaviorResolved: true });
+                if (behaviorMeterRef.current) { clearInterval(behaviorMeterRef.current); behaviorMeterRef.current = null; }
+                // stage_3 (진정 후): 안전 확인 + 칭찬 → 홈 복귀 후 5분 뒤 재시도
+                const calm = '많이 진정됐어요. 몸은 괜찮아요? 잘 견뎠어요 😊';
+                setMessages(prev => [...prev, { id: Date.now(), role: 'assistant', content: calm }]);
+                Speech.speak(cleanForSpeech(calm), { language: 'ko-KR' });
+                setTimeout(() => { stopBehaviorMeter(); navigation.navigate('Schedule', { restWithRetry: true }); }, 4500);
               }
             } else {
               calmCountRef.current = 0;
@@ -258,6 +311,30 @@ export default function AIChatScreen({ navigation, route }: Props) {
     if (granted) ExpoSpeechRecognitionModule.start({ lang: 'ko-KR', interimResults: false });
   };
 
+  // 1단계 버튼 처리
+  const handleStage1Choice = (label: string) => {
+    Speech.stop();
+    if (label === '도와주세요') {
+      // 보호자 호출 대신 채팅으로 사유를 물어봄 (입력 가능)
+      setHelpTalk(true);
+      const q = '무슨 힘든 일 있어? 😊 편하게 말해줘';
+      setMessages(prev => [
+        ...prev.map(m => ({ ...m, choices: undefined, aacButtons: undefined })),
+        { id: Date.now(), role: 'assistant' as const, content: q },
+      ]);
+      speakWithMeter(q);
+      return;
+    }
+    const resume = label === '지금 해볼게요'; // 이어서 → 진행 유지 / 쉬기 → 5분 뒤 재시도
+    const closing = resume ? '좋아요! 천천히 해봐요 😊' : '괜찮아요. 잠깐 쉬어요 😊';
+    setMessages(prev => [
+      ...prev.map(m => ({ ...m, choices: undefined, aacButtons: undefined })),
+      { id: Date.now(), role: 'assistant' as const, content: closing },
+    ]);
+    Speech.speak(cleanForSpeech(closing), { language: 'ko-KR' });
+    setTimeout(() => navigation.navigate('Schedule', resume ? { behaviorResolved: true } : { restWithRetry: true }), 2200);
+  };
+
   // ── AI 전송 ────────────────────────────────────────────────────────────────
   const clearChoices = (msgId: number) => {
     setMessages(prev => prev.map(m => m.id === msgId ? { ...m, choices: undefined, aacButtons: undefined } : m));
@@ -265,8 +342,31 @@ export default function AIChatScreen({ navigation, route }: Props) {
 
   const handleSend = async (text: string, fromMsgId?: number) => {
     if (!userId || aiLoading || !text.trim()) return;
+    // 같은 문장 4초 내 중복 전송 차단 (STT 연계로 이중 전송되는 경우)
+    const nowT = Date.now();
+    if (text.trim() === lastSentRef.current.text && nowT - lastSentRef.current.t < 4000) return;
+    lastSentRef.current = { text: text.trim(), t: nowT };
 
     if (fromMsgId !== undefined) clearChoices(fromMsgId);
+
+    // 거절/중도포기 사유 묻기 모드: 첫 답변을 사유로 저장(백엔드 AI 요약) 후 마무리
+    const reason = route.params?.reasonAsk;
+    if (reason && !reasonSubmittedRef.current) {
+      reasonSubmittedRef.current = true;
+      setMessages(prev => [...prev, { id: Date.now(), role: 'user', content: text }]);
+      // 사유 저장 + AI 요약은 서버에서 처리 (당사자는 기다리지 않음)
+      api.post(`/schedules/${reason.scheduleId}/refusal-reason`, {
+        user_id: userId, kind: reason.kind, reason_text: text,
+      }).catch(() => {});
+      const closing = reason.kind === 'gaveup'
+        ? '말해줘서 고마워. 여기까지 한 것도 잘했어 💙'
+        : '말해줘서 고마워. 준비되면 다시 같이 해보자 😊';
+      setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: closing }]);
+      speakWithMeter(closing);
+      // 마무리 후 자동 홈 복귀. 강요·재팝업 없이 오늘 일과 목록에 그대로 둠(대기).
+      setTimeout(() => navigation.navigate('Schedule'), 2800);
+      return;
+    }
 
     setMessages(prev => [...prev, { id: Date.now(), role: 'user', content: text }]);
     setAiLoading(true);
@@ -282,8 +382,8 @@ export default function AIChatScreen({ navigation, route }: Props) {
       const currentDb = currentDbRef.current;
       const chatContext: Record<string, unknown> = {};
       if (currentDb > 0) chatContext.decibel = currentDb;
-      if (route.params?.behaviorAlert) chatContext.behavior_stage = 'stage_2';
-      else if (route.params?.behaviorStage1) chatContext.behavior_stage = 'stage_1';
+      if (route.params?.behaviorAlert && !helpTalk) chatContext.behavior_stage = 'stage_2';
+      else if (route.params?.behaviorStage1 && !helpTalk) chatContext.behavior_stage = 'stage_1';
       const res = await sendChat(userId, text, Object.keys(chatContext).length ? chatContext : undefined);
       const { reply, stage, feedback } = res.data;
       if (reply) {
@@ -332,7 +432,7 @@ export default function AIChatScreen({ navigation, route }: Props) {
   // ═══════════════════════════════════════════════════════════════════════════
   return (
     <Animated.View style={[styles.root, { opacity: fadeAnim }]}>
-      <SafeAreaView style={{ flex: 1 }}>
+      <AppFrame navigation={navigation} active="ai" role="user">
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
 
           {/* ─── 헤더 ─── */}
@@ -390,7 +490,7 @@ export default function AIChatScreen({ navigation, route }: Props) {
                       <TouchableOpacity
                         key={`c-${i}`}
                         style={[styles.choiceBtn, { borderColor: theme }]}
-                        onPress={() => handleSend(c, msg.id)}
+                        onPress={() => route.params?.behaviorStage1 ? handleStage1Choice(c) : handleSend(c, msg.id)}
                         disabled={aiLoading}
                         activeOpacity={0.75}
                       >
@@ -401,7 +501,7 @@ export default function AIChatScreen({ navigation, route }: Props) {
                       <TouchableOpacity
                         key={`a-${i}`}
                         style={[styles.aacBtn, { backgroundColor: theme + '18', borderColor: theme + '40' }]}
-                        onPress={() => handleSend(b, msg.id)}
+                        onPress={() => route.params?.behaviorStage1 ? handleStage1Choice(b) : handleSend(b, msg.id)}
                         disabled={aiLoading}
                         activeOpacity={0.75}
                       >
@@ -425,8 +525,15 @@ export default function AIChatScreen({ navigation, route }: Props) {
             )}
           </ScrollView>
 
-          {/* ─── 입력 영역 ─── */}
+          {/* ─── 입력 영역 (행동 1·2단계 숨김. 단 '도와주세요' 채팅 모드는 표시) ─── */}
+          {(!(route.params?.behaviorAlert || route.params?.behaviorStage1) || helpTalk) && (
           <View style={styles.inputArea}>
+            {helpTalk && (
+              <TouchableOpacity style={[styles.helpDone, { borderColor: theme }]} activeOpacity={0.85}
+                onPress={() => navigation.navigate('Schedule', { restWithRetry: true })}>
+                <Text style={[styles.helpDoneText, { color: theme }]}>이제 괜찮아요</Text>
+              </TouchableOpacity>
+            )}
             {/* 텍스트 입력 */}
             <View style={styles.textRow}>
               <TextInput
@@ -481,16 +588,17 @@ export default function AIChatScreen({ navigation, route }: Props) {
               </Text>
             </View>
           </View>
+          )}
 
         </KeyboardAvoidingView>
-      </SafeAreaView>
+      </AppFrame>
     </Animated.View>
   );
 }
 
 // ── 스타일 ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#F4F6FB' },
+  root: { flex: 1, backgroundColor: '#FFFFFF' },
 
   header: {
     flexDirection: 'row', alignItems: 'center',
@@ -539,6 +647,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16, paddingTop: 12, paddingBottom: 16,
     gap: 12,
   },
+  helpDone: {
+    alignSelf: 'center', paddingHorizontal: 22, paddingVertical: 10,
+    borderRadius: 20, borderWidth: 1.5, backgroundColor: '#fff',
+  },
+  helpDoneText: { fontSize: 15, fontWeight: '800' },
   quickRow: { flexDirection: 'row', gap: 10 },
   quickBtn: {
     flex: 1, paddingVertical: 15, borderRadius: 14, alignItems: 'center', justifyContent: 'center',

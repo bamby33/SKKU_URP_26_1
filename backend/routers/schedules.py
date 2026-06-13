@@ -41,7 +41,10 @@ class ScheduleResponse(BaseModel):
 
 @router.post("/", response_model=ScheduleResponse)
 def create_schedule(data: ScheduleCreate, db: Session = Depends(get_db)):
-    schedule = Schedule(**data.model_dump())
+    from services.category import normalize_category
+    payload = data.model_dump()
+    payload["category"] = normalize_category(payload.get("category"), payload.get("title", ""))
+    schedule = Schedule(**payload)
     db.add(schedule)
     db.commit()
     db.refresh(schedule)
@@ -65,6 +68,59 @@ def delete_schedule(schedule_id: int, db: Session = Depends(get_db)):
     schedule.is_active = False
     db.commit()
     return {"success": True}
+
+
+class ReplaceItem(BaseModel):
+    title: str
+    scheduled_time: str
+    end_time: str | None = None
+    color: str | None = None
+    days_of_week: str = "0,1,2,3,4,5,6"
+    is_fixed: bool = False
+    category: str | None = None
+
+
+class ReplaceSchedulesRequest(BaseModel):
+    schedules: list[ReplaceItem]
+
+
+@router.post("/user/{user_id}/replace")
+def replace_schedules(user_id: int, data: ReplaceSchedulesRequest, db: Session = Depends(get_db)):
+    """일과 일괄 교체 — (제목, 시작시각) 기준으로 기존 일과를 재사용해 ID·로그를 보존.
+    추가/수정/삭제를 ID 보존하며 반영 (홈 진행상태·7일 히트맵 유지, 전체 삭제+재생성 금지)."""
+    from services.category import normalize_category
+    existing = db.query(Schedule).filter(
+        Schedule.user_id == user_id, Schedule.is_active == True
+    ).all()
+    by_key = {(e.title, e.scheduled_time): e for e in existing}
+    kept: set[int] = set()
+    result_ids: list[int] = []
+    for inc in data.schedules:
+        cat = normalize_category(inc.category, inc.title)
+        ex = by_key.get((inc.title, inc.scheduled_time))
+        if ex and ex.id not in kept:
+            # 기존 일과 재사용 → ID·로그 보존
+            ex.end_time = inc.end_time
+            ex.color = inc.color
+            ex.days_of_week = inc.days_of_week
+            ex.is_fixed = inc.is_fixed
+            ex.category = cat
+            ex.is_active = True
+            kept.add(ex.id)
+            result_ids.append(ex.id)
+        else:
+            s = Schedule(user_id=user_id, title=inc.title, scheduled_time=inc.scheduled_time,
+                         end_time=inc.end_time, color=inc.color, days_of_week=inc.days_of_week,
+                         is_fixed=inc.is_fixed, category=cat, is_active=True)
+            db.add(s)
+            db.flush()
+            result_ids.append(s.id)
+    # 들어오지 않은 기존 일과는 비활성화 (소프트 삭제, 과거 로그 보존)
+    for e in existing:
+        if e.id not in kept:
+            e.is_active = False
+    db.commit()
+    return {"ok": True, "ids": result_ids}
 
 
 class ScheduleCheckRequest(BaseModel):
@@ -95,6 +151,8 @@ class StopRequest(BaseModel):
     early_stop: bool = False
     duration_min: int | None = None
     note: str | None = None
+    transition_delay_min: int | None = None   # 완료 시각 − 다음 일과 시각(분). 완료 때만 전송
+    next_schedule_id: int | None = None        # 전환 구간 식별용 (다음 일과 id)
 
 
 class TransitionRequest(BaseModel):
@@ -131,7 +189,9 @@ def stop_schedule(schedule_id: int, data: StopRequest, db: Session = Depends(get
     from services.achievement import record_stop
     s = _get_schedule(schedule_id, db)
     log = record_stop(s, db, achieved=data.achieved, early_stop=data.early_stop,
-                      duration_min=data.duration_min, note=data.note)
+                      duration_min=data.duration_min, note=data.note,
+                      transition_delay_min=data.transition_delay_min,
+                      next_schedule_id=data.next_schedule_id)
     db.commit()
     return {
         "ok": True, "schedule_id": schedule_id,
@@ -164,6 +224,58 @@ def set_self_assessment(user_id: int, data: SelfAssessmentRequest, db: Session =
     rep.self_assessment = data.value
     db.commit()
     return {"ok": True, "self_assessment": data.value}
+
+
+class RefusalReasonRequest(BaseModel):
+    user_id: int
+    kind: str            # refused(거절) | gaveup(중도포기)
+    reason_text: str     # 당사자가 말한 사유 원문
+
+
+def _summarize_reason(title: str, kind: str, reason_text: str) -> str:
+    """당사자가 말한 거절/중도포기 사유를 보호자용으로 AI 요약 (뉴스 요약 톤)."""
+    from agents.care_agent import client, LLM_MODEL
+    kind_ko = "도중에 그만두려는" if kind == "gaveup" else "하기 싫어 거절한"
+    prompt = (
+        f"발달장애가 있는 분이 '{title}' 일과를 {kind_ko} 이유를 이렇게 말했어요:\n"
+        f"\"{reason_text}\"\n\n"
+        "이걸 보호자가 한눈에 이해하도록 한국어로 따뜻하게 정리해줘.\n"
+        "- 2~3개의 짧은 항목으로 나눠서, 각 항목을 한 줄에 한 문장씩 줄바꿈으로 작성\n"
+        "- 각 줄은 완결된 한 문장 (불릿 기호 ·, -, * 는 쓰지 말 것)\n"
+        "- 당사자가 한 말을 중심으로, 과한 추측은 하지 말 것\n"
+        "- 외국어·특수기호·토큰·마크다운 없이 순수 한국어 문장만"
+    )
+    try:
+        res = client.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300,
+            stop=["<end_of_turn>", "<start_of_turn>"],
+        )
+        return (res.choices[0].message.content or "").strip()
+    except Exception:
+        return ""
+
+
+@router.post("/{schedule_id}/refusal-reason")
+def save_refusal_reason(schedule_id: int, data: RefusalReasonRequest, db: Session = Depends(get_db)):
+    """거절/중도포기 사유를 받아 AI 요약 후 오늘 ScheduleLog 에 저장 (보호자 노출용)."""
+    from services.achievement import _today_log
+    s = _get_schedule(schedule_id, db)
+    log = _today_log(s, db)
+    log.user_id = s.user_id
+    log.note = data.reason_text
+    log.log_date = datetime.utcnow()
+    if data.kind == "refused":
+        log.status = ScheduleStatus.MISSED
+        if not log.response_type:
+            log.response_type = "later"
+    else:  # gaveup (중도포기) — record_stop 이 이미 early_stop 설정했을 수 있음
+        log.early_stop = True
+    summary = _summarize_reason(s.title, data.kind, data.reason_text)
+    log.ai_summary = summary or data.reason_text
+    db.commit()
+    return {"ok": True, "summary": log.ai_summary}
 
 
 @router.get("/user/{user_id}/today-report")

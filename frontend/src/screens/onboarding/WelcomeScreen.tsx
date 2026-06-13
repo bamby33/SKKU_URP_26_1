@@ -106,8 +106,8 @@ export default function WelcomeScreen({ navigation, route }: Props) {
         await api.post('/schedules/', {
           user_id: userId,
           title: `${s.emoji} ${s.activity}`,
-          scheduled_time: slotToTime(s.startSlot),
-          end_time: slotToTime(s.endSlot),
+          scheduled_time: s.startTime ?? slotToTime(s.startSlot),
+          end_time: s.endTime ?? slotToTime(s.endSlot),
           color: s.color,
           days_of_week: String(s.day),
         });
@@ -174,7 +174,7 @@ export default function WelcomeScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4F6FB' },
+  container: { flex: 1, backgroundColor: '#FFFFFF' },
   inner: {
     flex: 1, paddingHorizontal: 28, paddingTop: 16, paddingBottom: 32,
     justifyContent: 'space-between',

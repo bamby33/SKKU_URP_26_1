@@ -181,6 +181,8 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
         day:       b.day,
         startSlot: b.startSlot,
         endSlot:   b.endSlot,
+        startTime: b.scheduled_time ?? undefined,
+        endTime:   b.end_time ?? undefined,
         activity:  b.name,
         emoji:     b.emoji,
         color:     b.color,
@@ -383,7 +385,7 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4F6FB' },
+  container: { flex: 1, backgroundColor: '#FFFFFF' },
   content:   { padding: 24, gap: 20 },
 
   header: {

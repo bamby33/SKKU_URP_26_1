@@ -7,15 +7,7 @@ import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { api } from '../api/client';
 
-// 포그라운드에서도 알림 배너 표시
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+// 알림 표시 핸들러는 localNotify.ts에서 일괄 설정 (스케줄 배너 중복 억제 정책 포함)
 
 export async function registerPushToken(userId: number): Promise<void> {
   try {

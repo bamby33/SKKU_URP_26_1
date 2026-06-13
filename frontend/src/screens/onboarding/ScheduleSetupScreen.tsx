@@ -47,8 +47,10 @@ const PALETTE = [
 type Block = {
   id: string;
   day: number;
-  startSlot: number;
+  startSlot: number;  // 그리드 위치용
   endSlot: number;
+  startTime: string;  // 실제 저장/표시용 정확한 시각
+  endTime: string;
   name: string;
   emoji: string;
   color: string;
@@ -67,12 +69,18 @@ const toTime = (slot: number): string => {
   return `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
 };
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+const toMin = (t: string): number => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+const minToTime = (mins: number): string => {
+  const c = clamp(mins, 0, 23 * 60 + 59);
+  return `${String(Math.floor(c / 60)).padStart(2, '0')}:${String(c % 60).padStart(2, '0')}`;
+};
 
 export default function ScheduleSetupScreen({ navigation, route }: Props) {
   const { userName, age, gender, disabilityType, disabilityLevel, occupation, likes, dislikes, problemNotes, themeColor } = route.params;
 
   const initBlocks: Block[] = (route.params.schedules ?? []).map(s => ({
     id: nid(), day: s.day, startSlot: s.startSlot, endSlot: s.endSlot,
+    startTime: s.startTime ?? toTime(s.startSlot), endTime: s.endTime ?? toTime(s.endSlot),
     name: s.activity, emoji: s.emoji, color: s.color,
   }));
 
@@ -124,19 +132,19 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
   };
 
   const confirmAdd = () => {
+    if (toMin(addStart) >= toMin(addEnd)) { Alert.alert('시간 오류', '종료 시간이 시작 시간보다 늦어야 해요.'); return; }
     const ss = toSlot(addStart);
-    const es = toSlot(addEnd);
-    if (ss >= es) { Alert.alert('시간 오류', '종료 시간이 시작 시간보다 늦어야 해요.'); return; }
+    const es = Math.max(ss + 1, toSlot(addEnd));
     const name = addName.trim();
     if (!name) { Alert.alert('이름 필요', '일과 이름을 입력해주세요.'); return; }
     const days = addDays.map((on, i) => on ? i : -1).filter(i => i >= 0);
     if (!days.length) { Alert.alert('요일 선택', '요일을 하나 이상 선택해주세요.'); return; }
 
     setBlocks(prev => {
-      // 선택 요일에서 겹치는 블록 제거 후 추가
-      const filtered = prev.filter(b => !(days.includes(b.day) && b.startSlot < es && b.endSlot > ss));
+      // 선택 요일에서 겹치는 블록 제거 후 추가 (정확한 시각 기준)
+      const filtered = prev.filter(b => !(days.includes(b.day) && toMin(b.startTime) < toMin(addEnd) && toMin(b.endTime) > toMin(addStart)));
       const created = days.map(day => ({
-        id: nid(), day, startSlot: ss, endSlot: es,
+        id: nid(), day, startSlot: ss, endSlot: es, startTime: addStart, endTime: addEnd,
         name, emoji: addItem.emoji, color: addItem.color,
       }));
       return [...filtered, ...created];
@@ -183,18 +191,18 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
   const openEdit = (b: Block) => {
     setEditBlock(b);
     setEditName(b.name);
-    setEditStart(toTime(b.startSlot));
-    setEditEnd(toTime(b.endSlot));
+    setEditStart(b.startTime);
+    setEditEnd(b.endTime);
   };
 
   const confirmEdit = () => {
     if (!editBlock) return;
-    const ss = toSlot(editStart);
-    const es = toSlot(editEnd);
-    if (ss >= es) { Alert.alert('시간 오류', '종료 시간이 시작 시간보다 늦어야 해요.'); return; }
+    if (toMin(editStart) >= toMin(editEnd)) { Alert.alert('시간 오류', '종료 시간이 시작 시간보다 늦어야 해요.'); return; }
     if (!editName.trim()) { Alert.alert('이름 필요', '일과 이름을 입력해주세요.'); return; }
+    const ss = toSlot(editStart);
+    const es = Math.max(ss + 1, toSlot(editEnd));
     setBlocks(p => p.map(b => b.id === editBlock.id
-      ? { ...b, name: editName.trim(), startSlot: ss, endSlot: es }
+      ? { ...b, name: editName.trim(), startSlot: ss, endSlot: es, startTime: editStart, endTime: editEnd }
       : b));
     setEditBlock(null);
   };
@@ -218,6 +226,7 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
       dailyLife: (route.params as any).dailyLife ?? '',
       schedules: blocks.map(b => ({
         day: b.day, startSlot: b.startSlot, endSlot: b.endSlot,
+        startTime: b.startTime, endTime: b.endTime,
         activity: b.name, emoji: b.emoji, color: b.color,
       })),
     });
@@ -376,7 +385,7 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
                   <Text style={styles.cardEmoji}>{b.emoji}</Text>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.cardName} numberOfLines={1}>{b.name}</Text>
-                    <Text style={styles.cardTime}>{toTime(b.startSlot)} ~ {toTime(b.endSlot)}</Text>
+                    <Text style={styles.cardTime}>{b.startTime} ~ {b.endTime}</Text>
                   </View>
                   <Text style={styles.cardEdit}>수정</Text>
                 </TouchableOpacity>
@@ -459,7 +468,7 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
 
             <Text style={styles.modalLabel}>시간</Text>
             <View style={styles.timeRow}>
-              <TimePickerField value={addStart} onChange={(v) => { setAddStart(v); if (toSlot(v) >= toSlot(addEnd)) setAddEnd(toTime(Math.min(toSlot(v) + 2, TOTAL))); }} />
+              <TimePickerField value={addStart} onChange={(v) => { setAddStart(v); if (toMin(v) >= toMin(addEnd)) setAddEnd(minToTime(toMin(v) + 60)); }} />
               <Text style={styles.timeSep}>~</Text>
               <TimePickerField value={addEnd} onChange={setAddEnd} />
             </View>
@@ -510,7 +519,7 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
 
             <Text style={styles.modalLabel}>시간</Text>
             <View style={styles.timeRow}>
-              <TimePickerField value={editStart} onChange={(v) => { setEditStart(v); if (toSlot(v) >= toSlot(editEnd)) setEditEnd(toTime(Math.min(toSlot(v) + 2, TOTAL))); }} />
+              <TimePickerField value={editStart} onChange={(v) => { setEditStart(v); if (toMin(v) >= toMin(editEnd)) setEditEnd(minToTime(toMin(v) + 60)); }} />
               <Text style={styles.timeSep}>~</Text>
               <TimePickerField value={editEnd} onChange={setEditEnd} />
             </View>
@@ -534,7 +543,7 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4F6FB' },
+  container: { flex: 1, backgroundColor: '#FFFFFF' },
 
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

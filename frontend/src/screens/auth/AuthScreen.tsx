@@ -72,7 +72,6 @@ export default function AuthScreen({ navigation }: Props) {
                 activeOpacity={0.85}
                 onPress={() => navigation.navigate('PINLogin')}
               >
-                <Text style={styles.roleEmoji}>😊</Text>
                 <Text style={styles.roleTitle}>나</Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -80,7 +79,6 @@ export default function AuthScreen({ navigation }: Props) {
                 activeOpacity={0.85}
                 onPress={() => navigation.navigate('Login', { role: 'guardian' })}
               >
-                <Text style={styles.roleEmoji}>👪</Text>
                 <Text style={[styles.roleTitle, styles.roleTitleGuardian]}>보호자</Text>
               </TouchableOpacity>
             </View>
@@ -94,7 +92,7 @@ export default function AuthScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4F6FB' },
+  container: { flex: 1, backgroundColor: '#FFFFFF' },
   inner: {
     flex: 1,
     paddingHorizontal: 28,

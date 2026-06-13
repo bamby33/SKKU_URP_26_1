@@ -344,7 +344,7 @@ export default function EmergencyScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4F6FB' },
+  container: { flex: 1, backgroundColor: '#FFFFFF' },
 
   alertHeader: {
     backgroundColor: colors.alert,

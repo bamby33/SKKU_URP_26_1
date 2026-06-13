@@ -120,6 +120,10 @@ class ScheduleLog(Base):
     ended_at = Column(DateTime, nullable=True)            # 일과 종료 시각
     actual_duration_min = Column(Integer, nullable=True)  # 실제 진행 시간(분)
     early_stop = Column(Boolean, default=False)           # 예정보다 일찍 '그만할래요'
+    ai_summary = Column(Text, nullable=True)              # 거절/중도포기 사유의 AI 요약 (보호자용)
+    # ── 전환 지연 (Phase 3) — '다 했어요' 시각 − 다음 일과 시작 시각(분). 음수=원활, 양수=지연 ──
+    transition_delay_min = Column(Integer, nullable=True) # 완료 시에만 측정 (early_stop은 측정 안 함)
+    next_schedule_id = Column(Integer, nullable=True)     # 전환 구간 식별용 (A→B의 B)
 
     schedule = relationship("Schedule", back_populates="logs")
 
@@ -133,6 +137,7 @@ class BehaviorLog(Base):
     schedule_id = Column(Integer, ForeignKey("schedules.id"), nullable=True, index=True)
     stage = Column(Enum(FeedbackStage), nullable=False)
     trigger = Column(String, nullable=True)             # 감지 방식 (voice/gps/manual)
+    context = Column(String, nullable=True)             # transition(시작/전환) | in_activity(수행 중) | spontaneous
     decibel_level = Column(Float, nullable=True)        # 음성 데시벨
     ai_response = Column(Text, nullable=True)           # AI가 한 말
     note = Column(Text, nullable=True)                  # 팔로업 대화에서 파악한 행동 원인
@@ -226,6 +231,10 @@ def _migrate_sqlite():
         ("schedule_logs", "ended_at", "DATETIME"),
         ("schedule_logs", "actual_duration_min", "INTEGER"),
         ("schedule_logs", "early_stop", "BOOLEAN DEFAULT 0"),
+        ("schedule_logs", "ai_summary", "TEXT"),
+        ("schedule_logs", "transition_delay_min", "INTEGER"),
+        ("schedule_logs", "next_schedule_id", "INTEGER"),
+        ("behavior_logs", "context", "VARCHAR"),
         ("schedules", "category", "VARCHAR"),
         ("daily_reports", "self_assessment", "VARCHAR"),
     ]

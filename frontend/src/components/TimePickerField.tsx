@@ -1,13 +1,13 @@
 /**
- * 탭으로 시간을 고르는 피커 필드 (키보드 입력 대체)
- * - 06:00 ~ 22:00, 30분 단위 (스케줄 슬롯과 동일)
+ * 시간 선택 필드 — 아이폰 시계처럼 시·분을 굴리는 휠 스피너
+ * - 네이티브 DateTimePicker(spinner) 사용, 1분 단위 정확한 시각
+ * - 테마에 맞춘 심플한 바텀시트
  */
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Modal } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Modal, Platform } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
-
-const HOURS = Array.from({ length: 17 }, (_, i) => String(i + 6).padStart(2, '0')); // 06~22
-const MINS = ['00', '30'];
 
 type Props = {
   value: string;            // "HH:MM"
@@ -15,64 +15,58 @@ type Props = {
   accent?: string;
 };
 
+const pad = (n: number) => String(n).padStart(2, '0');
+const toDate = (hhmm: string): Date => {
+  const [h, m] = (hhmm || '09:00').split(':').map(Number);
+  const d = new Date();
+  d.setHours(h || 0, m || 0, 0, 0);
+  return d;
+};
+const label12 = (hhmm: string): string => {
+  const [h, m] = (hhmm || '09:00').split(':').map(Number);
+  const ampm = h < 12 ? '오전' : '오후';
+  return `${ampm} ${h % 12 || 12}:${pad(m)}`;
+};
+
 export default function TimePickerField({ value, onChange, accent = colors.primary }: Props) {
   const [open, setOpen] = useState(false);
-  const [h, setH] = useState(value.split(':')[0] ?? '09');
-  const [m, setM] = useState(value.split(':')[1] ?? '00');
+  const [temp, setTemp] = useState<Date>(toDate(value));
 
-  const openPicker = () => {
-    setH(value.split(':')[0] ?? '09');
-    setM(value.split(':')[1] ?? '00');
-    setOpen(true);
-  };
-  const confirm = () => { onChange(`${h}:${m}`); setOpen(false); };
+  const openPicker = () => { setTemp(toDate(value)); setOpen(true); };
+  const confirm = () => { onChange(`${pad(temp.getHours())}:${pad(temp.getMinutes())}`); setOpen(false); };
 
   return (
     <>
-      <TouchableOpacity style={styles.field} onPress={openPicker} activeOpacity={0.8}>
-        <Text style={styles.fieldText}>{value}</Text>
-        <Text style={styles.fieldHint}>▾</Text>
+      <TouchableOpacity style={styles.field} onPress={openPicker} activeOpacity={0.7}>
+        <Ionicons name="time-outline" size={17} color={accent} />
+        <Text style={styles.fieldText}>{label12(value)}</Text>
       </TouchableOpacity>
 
-      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+      <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
         <View style={styles.overlay}>
-          <View style={styles.card}>
-            <Text style={[styles.selected, { color: accent }]}>{h}:{m}</Text>
-
-            <Text style={styles.label}>시</Text>
-            <View style={styles.hourGrid}>
-              {HOURS.map(hh => (
-                <TouchableOpacity
-                  key={hh}
-                  style={[styles.hBtn, h === hh && { backgroundColor: accent, borderColor: accent }]}
-                  onPress={() => setH(hh)}
-                >
-                  <Text style={[styles.hTxt, h === hh && { color: '#fff' }]}>{hh}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.label}>분</Text>
-            <View style={styles.minRow}>
-              {MINS.map(mm => (
-                <TouchableOpacity
-                  key={mm}
-                  style={[styles.mBtn, m === mm && { backgroundColor: accent, borderColor: accent }]}
-                  onPress={() => setM(mm)}
-                >
-                  <Text style={[styles.mTxt, m === mm && { color: '#fff' }]}>{mm}분</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <View style={styles.btns}>
-              <TouchableOpacity style={styles.cancel} onPress={() => setOpen(false)}>
-                <Text style={styles.cancelT}>취소</Text>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setOpen(false)} />
+          <View style={styles.sheet}>
+            <View style={styles.handle} />
+            <View style={styles.head}>
+              <TouchableOpacity onPress={() => setOpen(false)} hitSlop={10}>
+                <Text style={styles.cancel}>취소</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.ok, { backgroundColor: accent }]} onPress={confirm}>
-                <Text style={styles.okT}>확인</Text>
+              <Text style={styles.title}>시간 선택</Text>
+              <TouchableOpacity onPress={confirm} hitSlop={10}>
+                <Text style={[styles.confirm, { color: accent }]}>완료</Text>
               </TouchableOpacity>
             </View>
+
+            <DateTimePicker
+              value={temp}
+              mode="time"
+              display="spinner"
+              locale="ko-KR"
+              minuteInterval={1}
+              themeVariant="light"
+              onChange={(_, d) => { if (d) setTemp(d); }}
+              style={styles.spinner}
+            />
           </View>
         </View>
       </Modal>
@@ -82,38 +76,24 @@ export default function TimePickerField({ value, onChange, accent = colors.prima
 
 const styles = StyleSheet.create({
   field: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    backgroundColor: '#F4FAF7', borderRadius: 12, paddingVertical: 13,
-    borderWidth: 1.5, borderColor: colors.border,
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7,
+    backgroundColor: '#fff', borderRadius: 12, paddingVertical: 13,
+    borderWidth: 1.5, borderColor: '#E2E8F0',
   },
-  fieldText: { fontSize: 17, fontWeight: '800', color: colors.text },
-  fieldHint: { fontSize: 12, color: '#aaa' },
+  fieldText: { fontSize: 16, fontWeight: '800', color: '#1E293B' },
 
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center', padding: 24 },
-  card: {
-    backgroundColor: colors.white, borderRadius: 24, padding: 22, width: '100%',
-    elevation: 10, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 20, shadowOffset: { width: 0, height: 6 },
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
+  sheet: {
+    backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    paddingHorizontal: 16, paddingTop: 10, paddingBottom: Platform.OS === 'ios' ? 30 : 16,
   },
-  selected: { fontSize: 34, fontWeight: '900', textAlign: 'center', marginBottom: 14 },
-  label: { fontSize: 12, fontWeight: '700', color: '#888', marginBottom: 8 },
-
-  hourGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
-  hBtn: {
-    width: 46, height: 44, borderRadius: 12, backgroundColor: '#F4FAF7',
-    alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: colors.border,
+  handle: { width: 38, height: 4, borderRadius: 2, backgroundColor: '#E2E8F0', alignSelf: 'center', marginBottom: 8 },
+  head: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingVertical: 6, marginBottom: 4,
   },
-  hTxt: { fontSize: 15, fontWeight: '700', color: '#666' },
-
-  minRow: { flexDirection: 'row', gap: 10, marginBottom: 20 },
-  mBtn: {
-    flex: 1, paddingVertical: 13, borderRadius: 12, backgroundColor: '#F4FAF7',
-    alignItems: 'center', borderWidth: 1.5, borderColor: colors.border,
-  },
-  mTxt: { fontSize: 16, fontWeight: '700', color: '#666' },
-
-  btns: { flexDirection: 'row', gap: 10 },
-  cancel: { flex: 1, paddingVertical: 13, borderRadius: 14, backgroundColor: '#E8F5EE', alignItems: 'center' },
-  cancelT: { fontSize: 15, fontWeight: '700', color: '#888' },
-  ok: { flex: 2, paddingVertical: 13, borderRadius: 14, alignItems: 'center' },
-  okT: { fontSize: 15, fontWeight: '800', color: '#fff' },
+  title: { fontSize: 16, fontWeight: '900', color: '#1E293B' },
+  cancel: { fontSize: 15, fontWeight: '700', color: '#94A3B8' },
+  confirm: { fontSize: 16, fontWeight: '900' },
+  spinner: { alignSelf: 'center', width: '100%' },
 });

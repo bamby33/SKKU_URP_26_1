@@ -82,13 +82,13 @@ export default function GuardianTodayScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#F4F6FB' },
+  root: { flex: 1, backgroundColor: '#FFFFFF' },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 18, paddingTop: 14, paddingBottom: 8,
   },
   back: { fontSize: 15, fontWeight: '800', color: colors.guardian },
-  title: { fontSize: 18, fontWeight: '900', color: colors.guardian },
+  title: { fontSize: 18, fontWeight: '900', color: '#1E293B' },
   body: { padding: 16, gap: 12, paddingBottom: 40 },
   rateCard: {
     backgroundColor: colors.white, borderRadius: 16, padding: 18,

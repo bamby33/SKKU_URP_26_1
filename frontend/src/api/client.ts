@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const BASE_URL = 'https://payroll-ozone-simpson-launched.trycloudflare.com';
+const BASE_URL = 'https://wichita-ssl-soldier-committed.trycloudflare.com';
 
 export const api = axios.create({
   baseURL: BASE_URL,

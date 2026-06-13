@@ -15,6 +15,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
 import { getSchedules, api } from '../../api/client';
+import { SchedIcon } from '../../components/SchedIcon';
 import { cleanForSpeech } from '../../utils/text';
 
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, 'DailySummary'> };
@@ -106,7 +107,7 @@ export default function DailySummaryScreen({ navigation }: Props) {
                   const { emoji, name } = parseTitle(t);
                   return (
                     <View key={i} style={styles.doneRow}>
-                      <Text style={styles.doneEmoji}>{emoji}</Text>
+                      <SchedIcon title={name} emoji={emoji} size={28} emojiStyle={styles.doneEmoji} />
                       <Text style={styles.doneName}>{name}</Text>
                       <Text style={[styles.doneCheck, { color: theme }]}>✓</Text>
                     </View>
@@ -150,7 +151,7 @@ export default function DailySummaryScreen({ navigation }: Props) {
                   return (
                     <View key={s.id} style={styles.tmrRow}>
                       <Text style={styles.tmrTime}>{s.scheduled_time}</Text>
-                      <Text style={styles.tmrEmoji}>{emoji}</Text>
+                      <SchedIcon title={name} emoji={emoji} size={26} emojiStyle={styles.tmrEmoji} />
                       <Text style={styles.tmrName} numberOfLines={1}>{name}</Text>
                     </View>
                   );
@@ -171,7 +172,7 @@ export default function DailySummaryScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#F4F6FB' },
+  root: { flex: 1, backgroundColor: '#FFFFFF' },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 18, paddingTop: 14, paddingBottom: 8,

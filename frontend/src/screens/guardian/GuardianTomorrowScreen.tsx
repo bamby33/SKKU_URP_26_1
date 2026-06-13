@@ -8,6 +8,7 @@ import {
   TextInput, ActivityIndicator, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AppFrame from '../../components/AppFrame';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RootStackParamList } from '../../navigation/AppNavigator';
@@ -82,7 +83,8 @@ export default function GuardianTomorrowScreen({ navigation }: Props) {
   };
 
   return (
-    <SafeAreaView style={styles.root}>
+   <AppFrame navigation={navigation} active="tomorrow" role="guardian">
+    <View style={styles.root}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={{ width: 56 }}>
           <Text style={styles.back}>← 닫기</Text>
@@ -155,18 +157,19 @@ export default function GuardianTomorrowScreen({ navigation }: Props) {
           </View>
         </ScrollView>
       )}
-    </SafeAreaView>
+    </View>
+   </AppFrame>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#F4F6FB' },
+  root: { flex: 1, backgroundColor: '#FFFFFF' },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 18, paddingTop: 14, paddingBottom: 8,
   },
   back: { fontSize: 15, fontWeight: '800', color: colors.guardian },
-  title: { fontSize: 18, fontWeight: '900', color: colors.guardian },
+  title: { fontSize: 18, fontWeight: '900', color: '#1E293B' },
   body: { padding: 16, gap: 12, paddingBottom: 40 },
   sectionTitle: { fontSize: 13, fontWeight: '800', color: colors.primary },
   sectionSub: { fontSize: 11, color: '#94A3B8', fontWeight: '600' },

@@ -15,6 +15,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
 import { api } from '../../api/client';
+import { SchedIcon } from '../../components/SchedIcon';
+
+const stripLeadEmoji = (t: string) => t.replace(/^[^\w가-힣]+/u, '').trim() || t;
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'TodayScheduleEdit'>;
@@ -238,7 +241,8 @@ export default function TodayScheduleEditScreen({ navigation }: Props) {
               <View key={s.id} style={[styles.row, s.id < 0 && styles.rowNew]}>
                 <View style={styles.rowLeft}>
                   <Text style={styles.rowTime}>{formatTime(s.scheduled_time)}</Text>
-                  <Text style={styles.rowTitle}>{s.title}</Text>
+                  <SchedIcon title={s.title} emoji={(s.title.match(/^\p{Extended_Pictographic}/u)?.[0]) || '📋'} size={26} />
+                  <Text style={styles.rowTitle}>{stripLeadEmoji(s.title)}</Text>
                 </View>
                 {s.id < 0 && <View style={styles.newBadge}><Text style={styles.newBadgeText}>추가 예정</Text></View>}
                 <TouchableOpacity style={styles.delBtn} onPress={() => handleDelete(s.id, s.title)}>
@@ -327,7 +331,7 @@ export default function TodayScheduleEditScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4F6FB' },
+  container: { flex: 1, backgroundColor: '#FFFFFF' },
 
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

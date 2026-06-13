@@ -25,9 +25,9 @@ export default function PINLoginScreen({ navigation }: Props) {
 
   useEffect(() => {
     AsyncStorage.getItem('user_id').then(async (id) => {
-      // 테스트용: 저장된 계정이 없으면 1번(test) 계정으로 폴백
+      // 테스트용: 저장된 계정이 없으면 5번(데모당사자=데모보호자가 보는 계정)으로 폴백
       if (!id) {
-        id = '1';
+        id = '5';
         await AsyncStorage.setItem('user_id', id);
       }
       setUserId(id);
@@ -50,6 +50,7 @@ export default function PINLoginScreen({ navigation }: Props) {
           user_id: Number(userId),
           pin: next,
         });
+        await AsyncStorage.setItem('role', 'user'); // 당사자 역할 — 보호자 푸시 억제 기준
         navigation.reset({ index: 0, routes: [{ name: 'Schedule' }] });
       } catch (e: any) {
         Vibration.vibrate(300);
@@ -69,12 +70,12 @@ export default function PINLoginScreen({ navigation }: Props) {
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Text style={styles.backText}>← 뒤로</Text>
         </TouchableOpacity>
+        <Text style={styles.brand}>Routy</Text>
+        <View style={{ width: 56 }} />
       </View>
 
       <View style={styles.content}>
-        <Text style={styles.emoji}>🔢</Text>
-        <Text style={styles.title}>PIN 번호를{'\n'}입력해주세요</Text>
-        <Text style={styles.subtitle}>보호자가 설정한 4자리 숫자예요</Text>
+        <Text style={styles.title}>PIN 번호를 입력해주세요</Text>
 
         {/* PIN 도트 */}
         <View style={styles.dotRow}>
@@ -105,19 +106,18 @@ export default function PINLoginScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4F6FB' },
-  header: { paddingHorizontal: 20, paddingTop: 12 },
+  container: { flex: 1, backgroundColor: '#FFFFFF' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 12 },
+  brand: { fontSize: 22, fontWeight: '900', color: colors.primary, letterSpacing: -0.5 },
   backBtn: {
-    alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center',
+    flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: 14, paddingVertical: 8,
     backgroundColor: colors.primaryBg, borderRadius: 20,
   },
   backText: { fontSize: 15, color: colors.primary, fontWeight: '800' },
 
-  content: { flex: 1, alignItems: 'center', paddingHorizontal: 32, paddingTop: 20, gap: 20 },
-  emoji: { fontSize: 64 },
-  title: { fontSize: 26, fontWeight: '900', color: colors.primary, textAlign: 'center', lineHeight: 36 },
-  subtitle: { fontSize: 13, color: '#888', textAlign: 'center' },
+  content: { flex: 1, alignItems: 'center', paddingHorizontal: 32, paddingTop: 40, gap: 24 },
+  title: { fontSize: 24, fontWeight: '900', color: '#1E293B', textAlign: 'center' },
 
   dotRow: { flexDirection: 'row', gap: 20, marginVertical: 8 },
   dot: {

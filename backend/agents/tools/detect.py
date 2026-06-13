@@ -37,10 +37,8 @@ TOOL_DEFINITION = {
     }
 }
 
-# 데시벨 임계값
-DB_CALM = 50       # 평온
-DB_ALERT = 70      # 주의 (1단계 피드백)
-DB_AGITATED = 85   # 흥분 (2단계 피드백)
+# 데시벨 임계값 — 이 이상이면 '높은 데시벨'(흥분) → stage_2 (프론트 DB_HIGH 와 동일)
+DB_HIGH = 90
 
 
 def detect_user_response(
@@ -60,50 +58,26 @@ def detect_user_response(
         feedback_stage = None
         trigger = []
 
-        stage1_keywords = [
-            "싫어", "싫다", "안해", "안 해", "하기 싫어", "못해",
-            "모르겠어", "몰라", "귀찮아", "안 할래", "하기 싫다"
+        refuse_keywords = [
+            "싫어", "싫다", "안해", "안 해", "하기 싫어", "하기 싫다", "하기 싫다고", "못해",
+            "모르겠어", "몰라", "귀찮아", "안 할래", "그만해", "시끄러워", "하지 말라고", "짜증나", "저리 가",
         ]
-        stage2_keywords = [
-            "하기 싫다고", "왜 자꾸 시켜", "그만해", "시끄러워",
-            "하지 말라고", "짜증나", "그만", "저리 가"
-        ]
+        has_refuse = bool(user_text and any(kw in user_text for kw in refuse_keywords))
+        high_db = decibel is not None and decibel >= DB_HIGH
 
-        has_stage2_text = bool(user_text and any(kw in user_text for kw in stage2_keywords))
-        has_stage1_text = bool(user_text and any(kw in user_text for kw in stage1_keywords))
-        high_db = decibel is not None and decibel >= DB_AGITATED
-        mid_db  = decibel is not None and DB_ALERT <= decibel < DB_AGITATED
-
-        if user_text:
-            # 텍스트 있을 때: 키워드 + dB 조합으로 판단
-            if has_stage2_text and high_db:
-                # 부정 격한 표현 + 85dB 이상 → 2단계
-                state = "agitated"
-                feedback_stage = FeedbackStage.STAGE_2
-                trigger.extend(["text_agitation", f"voice:{decibel}dB"])
-            elif has_stage2_text or (has_stage1_text and high_db):
-                # 격한 표현이지만 dB 낮음 / 거부 표현 + 높은 dB → 1단계
-                state = "alert"
-                feedback_stage = FeedbackStage.STAGE_1
-                trigger.append("text_refusal" if has_stage1_text else "text_agitation_low_db")
-                if decibel is not None:
-                    trigger.append(f"voice:{decibel}dB")
-            elif has_stage1_text:
-                # 거부 표현만 → 1단계
-                state = "alert"
-                feedback_stage = FeedbackStage.STAGE_1
+        # 감지 기준
+        #  stage_1 = 부정언어만 (소리 안 큼)
+        #  stage_2 = 데시벨 높음 (말 유무 무관) or 부정언어 + 높은 데시벨
+        if high_db:
+            state = "agitated"
+            feedback_stage = FeedbackStage.STAGE_2
+            if has_refuse:
                 trigger.append("text_refusal")
-            # dB만 높고 텍스트에 이상 없으면 정상 대화로 간주
-        else:
-            # 텍스트 없을 때: dB 단독 판단 (안전망)
-            if high_db:
-                state = "agitated"
-                feedback_stage = FeedbackStage.STAGE_2
-                trigger.append(f"voice:{decibel}dB")
-            elif mid_db:
-                state = "alert"
-                feedback_stage = FeedbackStage.STAGE_1
-                trigger.append(f"voice:{decibel}dB")
+            trigger.append(f"voice:{decibel}dB")
+        elif has_refuse:
+            state = "alert"
+            feedback_stage = FeedbackStage.STAGE_1
+            trigger.append("text_refusal")
 
         # 3. GPS 미이동 = 스케줄 미달성 신호
         schedule_missed = False

@@ -11,6 +11,7 @@ import {
   LayoutAnimation, UIManager, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
@@ -19,6 +20,9 @@ import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
 import { api } from '../../api/client';
 import { registerPushToken } from '../../utils/push';
+import { scheduleGuardianRecap } from '../../utils/localNotify';
+import WeeklyRateChart from '../../components/WeeklyRateChart';
+import AppFrame from '../../components/AppFrame';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'GuardianReport'>;
@@ -54,12 +58,16 @@ type Dashboard = {
   live_total: number;
   live_rate: number;
   behavior_alerts: BehaviorAlert[];
+  behavior_count?: number;
+  behavior_events?: { id: number; logged_at: string; stage_label: string; summary: string }[];
   has_unread: boolean;
   ai_summary: string | null;
   tomorrow_schedules: TomorrowSchedule[];
   suitability?: Suitability[];
   self_assessment?: 'good' | 'soso' | 'bad' | null;
-  today_items?: { schedule_id: number; title: string; time: string; status: string }[];
+  today_items?: { schedule_id: number; title: string; time: string; status: string; end?: string | null; early_stop?: boolean; duration?: number | null; note?: string | null; ai_summary?: string | null }[];
+  weekly_rates?: { label: string; rate: number; has: boolean }[];
+  user_name?: string;
 };
 
 const GRADE_META: Record<string, { dot: string; label: string }> = {
@@ -86,6 +94,7 @@ function nowHHMM(): string {
   const n = new Date();
   return `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`;
 }
+const toMin = (hhmm: string) => { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; };
 
 function formatTime(hhmm: string): string {
   const [h, m] = hhmm.split(':').map(Number);
@@ -95,7 +104,9 @@ function formatTime(hhmm: string): string {
 }
 
 function formatLogTime(iso: string): string {
-  const d = new Date(iso);
+  // 백엔드 logged_at은 UTC(naive) → 타임존 표기가 없으면 UTC로 간주해 KST로 변환
+  const hasTz = /[zZ]|[+-]\d\d:?\d\d$/.test(iso);
+  const d = new Date(hasTz ? iso : iso + 'Z');
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
@@ -156,13 +167,20 @@ export default function GuardianReportScreen({ navigation }: Props) {
     }
   }, []);
 
-  // 푸시 토큰 등록 + 알림 탭 시 대시보드 새로고침
+  // 푸시 토큰 등록 + Recap 알림 예약 + 알림 탭 처리
   useEffect(() => {
-    AsyncStorage.getItem('user_id').then((uid) => {
-      if (uid) registerPushToken(Number(uid));
+    AsyncStorage.getItem('user_id').then(async (uid) => {
+      if (!uid) return;
+      registerPushToken(Number(uid));
+      try {
+        const res = await api.get(`/schedules/user/${uid}`);
+        scheduleGuardianRecap(res.data).catch(() => {});
+      } catch {}
     });
-    const sub = Notifications.addNotificationResponseReceivedListener(() => {
-      fetchDashboard(true);
+    const sub = Notifications.addNotificationResponseReceivedListener((resp) => {
+      const data: any = resp.notification.request.content.data;
+      if (data?.type === 'guardian_recap') navigation.navigate('GuardianRecap');
+      else fetchDashboard(true);
     });
     return () => sub.remove();
   }, [fetchDashboard]);
@@ -209,15 +227,9 @@ export default function GuardianReportScreen({ navigation }: Props) {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* 헤더 — 당사자 페이지와 통일 (Routy 브랜드) */}
-      <View style={styles.header}>
-        <Text style={styles.hBrand}>Routy</Text>
-        <TouchableOpacity style={styles.menuBtn} onPress={() => setMenuOpen(true)} activeOpacity={0.75}>
-          <Text style={styles.menuIcon}>☰</Text>
-        </TouchableOpacity>
-      </View>
-
+    <AppFrame navigation={navigation} active="home" role="guardian">
+     <View style={styles.container}>
+      {/* Routy 헤더는 AppFrame에서 제공 */}
       {loading ? (
         <View style={styles.loadingWrap}>
           <ActivityIndicator size="large" color={colors.guardian} />
@@ -237,28 +249,22 @@ export default function GuardianReportScreen({ navigation }: Props) {
         >
           {/* ── 상단 요약 (탭하면 상세) ── */}
           {data && (() => {
-            const newAlerts = data.behavior_alerts.filter(a => !a.is_read).length;
-            const redCount = (data.suitability ?? []).filter(s => s.grade === 'red').length;
+            const behaviorCount = data.behavior_count ?? 0;
             return (
               <View style={styles.summaryCard}>
                 <TouchableOpacity style={[styles.summaryItem, detail === 'achievement' && styles.summaryItemActive]} activeOpacity={0.7} onPress={() => toggleExpand('achievement')}>
-                  <Text style={styles.summaryValue}>{data.live_rate}%</Text>
-                  <Text style={styles.summaryLabel}>오늘 달성률</Text>
+                  <Text style={styles.sumValueRate}>{data.live_rate}%</Text>
+                  <Text style={styles.sumLabel}>오늘 달성률</Text>
                 </TouchableOpacity>
                 <View style={styles.summaryDivider} />
                 <TouchableOpacity style={[styles.summaryItem, detail === 'alerts' && styles.summaryItemActive]} activeOpacity={0.7} onPress={() => toggleExpand('alerts')}>
-                  <Text style={[styles.summaryValue, newAlerts > 0 && { color: '#DC2626' }]}>{newAlerts}</Text>
-                  <Text style={styles.summaryLabel}>새 확인사항</Text>
+                  <Text style={[styles.sumValueBeh, behaviorCount === 0 && { color: '#94A3B8' }]}>{behaviorCount}</Text>
+                  <Text style={styles.sumLabel}>문제행동</Text>
                 </TouchableOpacity>
-                <View style={styles.summaryDivider} />
-                <View style={styles.summaryItem}>
-                  <Text style={[styles.summaryValue, redCount > 0 && { color: '#DC2626' }]}>{redCount}</Text>
-                  <Text style={styles.summaryLabel}>🔴 안 맞는 일과</Text>
-                </View>
               </View>
             );
           })()}
-          {detail === null && <Text style={styles.summaryHint}>달성률·확인사항을 누르면 자세히 볼 수 있어요</Text>}
+          {detail === null && <Text style={styles.summaryHint}>항목을 누르면 자세히 볼 수 있어요</Text>}
 
           {/* 인라인 펼침 — 오늘 달성률 → 오늘 일과 목록 */}
           {detail === 'achievement' && (
@@ -277,85 +283,140 @@ export default function GuardianReportScreen({ navigation }: Props) {
             </View>
           )}
 
-          {/* 인라인 펼침 — 새 확인사항 */}
+          {/* 인라인 펼침 — 문제행동: 몇시에 무슨 문제행동 + AI 요약 */}
           {detail === 'alerts' && (
             <View style={styles.expandCard}>
-              {!data?.behavior_alerts.length ? (
-                <Text style={styles.emptyAlertsText}>오늘 이상행동 기록이 없어요.</Text>
-              ) : data.behavior_alerts.map((alert) => (
-                <View key={alert.id} style={[styles.alertRow, { backgroundColor: stageBg(alert.stage) }]}>
-                  <View style={styles.alertLeft}>
-                    <Text style={[styles.alertStage, { color: stageColor(alert.stage) }]}>{alert.stage_label}</Text>
-                    {alert.schedule_title && <Text style={styles.alertSchedule}>{alert.schedule_title} 일과 중</Text>}
-                    <Text style={styles.alertTrigger}>
-                      {alert.trigger?.includes('emergency') ? '긴급 호출 (당사자 요청)' :
-                       alert.trigger?.includes('voice') ? '음성 감지' :
-                       alert.trigger?.includes('text') ? '텍스트 감지' :
-                       alert.trigger?.includes('gps') ? 'GPS 감지' : '감지됨'}
-                    </Text>
+              {!data?.behavior_events?.length ? (
+                <Text style={styles.emptyAlertsText}>오늘 감지된 문제행동이 없어요.</Text>
+              ) : data.behavior_events.map((ev, i) => {
+                const bullets = (ev.summary || '').split('\n').map(l => l.trim()).filter(Boolean);
+                return (
+                  <View key={ev.id} style={[styles.behItem, i === data.behavior_events!.length - 1 && { borderBottomWidth: 0, paddingBottom: 0 }]}>
+                    <Text style={styles.behTime}>{formatLogTime(ev.logged_at)}</Text>
+                    <View style={styles.storyWrap}>
+                      <View style={styles.storyHead}>
+                        <Text style={styles.storyQ}>무슨 일이 있었을까요?</Text>
+                        <View style={styles.aiChip}>
+                          <Ionicons name="sparkles" size={11} color={colors.primary} />
+                          <Text style={styles.aiChipText}>AI 요약</Text>
+                        </View>
+                      </View>
+                      {bullets.map((b, k) => (
+                        <View key={k} style={styles.bulletRow}>
+                          <Text style={styles.bulletDot}>•</Text>
+                          <Text style={styles.bulletText}>{b}</Text>
+                        </View>
+                      ))}
+                    </View>
                   </View>
-                  <Text style={styles.alertTime}>{formatLogTime(alert.logged_at)}</Text>
-                </View>
-              ))}
+                );
+              })}
             </View>
           )}
 
           {/* ── 현재 수행 중인 일과 (탭 → 오늘 일과 페이지) ── */}
           <Text style={styles.sectionTitle}>현재 수행 중인 일과</Text>
-          <TouchableOpacity activeOpacity={0.85} onPress={() => navigation.navigate('GuardianToday')}>
-            {data?.current_schedule ? (
-              <View style={styles.currentCard}>
-                <View style={styles.currentLeft}>
-                  <View style={styles.liveDot} />
-                  <View>
-                    <Text style={styles.currentTime}>{formatTime(data.current_schedule.time)}</Text>
-                    <Text style={styles.currentTitle}>{noEmoji(data.current_schedule.title)}</Text>
-                  </View>
-                </View>
-                <View style={styles.inProgressBadge}>
-                  <Text style={styles.inProgressText}>진행 중</Text>
-                </View>
+          {data?.current_schedule ? (
+            <View style={styles.currentCard}>
+              <View style={styles.nowTag}>
+                <View style={styles.nowDot} />
+                <Text style={styles.nowTagText}>지금 진행 중</Text>
               </View>
-            ) : (
-              <View style={styles.currentCard}>
-                <Text style={styles.emptyText}>지금 진행 중인 일과가 없어요.</Text>
-              </View>
-            )}
-            <Text style={styles.tapHint}>탭하면 오늘 일과 전체를 볼 수 있어요 ›</Text>
-          </TouchableOpacity>
+              <Text style={styles.currentTime}>{formatTime(data.current_schedule.time)}</Text>
+              <Text style={styles.currentTitle}>{noEmoji(data.current_schedule.title)}</Text>
+            </View>
+          ) : (
+            <View style={styles.currentCard}>
+              <Text style={styles.emptyText}>지금 진행 중인 일과가 없어요.</Text>
+            </View>
+          )}
 
-          {/* ── 일과별 적합도 (상시 표시) ── */}
-          {data?.suitability && data.suitability.length > 0 && (
-            <>
-              <Text style={styles.sectionTitle}>일과별 적합도 <Text style={styles.sectionSub}>(최근 7일)</Text></Text>
-              <View style={styles.heatCard}>
-                <View style={styles.heatRow}>
-                  <View style={styles.heatNameCol} />
-                  {(data.suitability[0]?.cells ?? []).map((c, i) => (
-                    <Text key={i} style={styles.heatColLabel}>{c.label}</Text>
-                  ))}
-                </View>
-                {data.suitability.map(su => (
-                  <View key={su.schedule_id} style={styles.heatRow}>
-                    <Text style={styles.heatName} numberOfLines={1}>{noEmoji(su.title)}</Text>
-                    {su.cells.map((c, i) => (
-                      <View key={i} style={styles.heatCellWrap}>
-                        <View style={[styles.heatCell, { backgroundColor: HEAT_COLOR[c.status] }]} />
+          {/* ── 오늘 남은 일과 ── */}
+          {(() => {
+            const now = nowHHMM();
+            const remaining = (data?.today_items ?? []).filter(it => it.time >= now);
+            return (
+              <>
+                <Text style={styles.sectionTitle}>오늘 남은 일과</Text>
+                {remaining.length ? (
+                  <View style={styles.tomorrowCard}>
+                    {remaining.map((item, i) => (
+                      <View key={item.schedule_id} style={[styles.tItem, i === remaining.length - 1 && styles.tItemLast]}>
+                        <Text style={styles.tTime}>{formatTime(item.time)}</Text>
+                        <Text style={styles.tLabel} numberOfLines={1}>{noEmoji(item.title)}</Text>
                       </View>
                     ))}
                   </View>
-                ))}
-                <View style={styles.heatLegend}>
-                  {([['green','완료'],['yellow','중단'],['red','미수행'],['none','기록없음']] as [HeatStatus,string][]).map(([st, label]) => (
-                    <View key={st} style={styles.legendItem}>
-                      <View style={[styles.legendDot, { backgroundColor: HEAT_COLOR[st] }]} />
-                      <Text style={styles.legendText}>{label}</Text>
-                    </View>
-                  ))}
+                ) : (
+                  <View style={styles.emptyCard}>
+                    <Text style={styles.emptyText}>오늘 남은 일과가 없어요.</Text>
+                  </View>
+                )}
+              </>
+            );
+          })()}
+
+          {/* ── 오늘 힘들어한 일과 (실시간) ── */}
+          {(() => {
+            const its = data?.today_items ?? [];
+            type HardRow = { it: any; kind: string; color: string; detail: string | null };
+            const rows: HardRow[] = [
+              ...its.filter(i => i.status === 'missed')
+                .map(it => ({ it, kind: '거절', color: '#D64545', detail: it.note ? `“${it.note}”` : null })),
+              ...its.filter(i => i.status === 'achieved' && i.early_stop)
+                .map(it => ({ it, kind: '중도 포기', color: '#C97A2B', detail: it.note ? `“${it.note}”` : null })),
+              ...its.filter(i => i.status === 'achieved' && !i.early_stop && i.duration && i.end && i.duration > (toMin(i.end) - toMin(i.time)))
+                .map(it => ({ it, kind: '오래 걸림', color: '#E07B39', detail: `예상보다 +${(it.duration ?? 0) - (toMin(it.end!) - toMin(it.time))}분` })),
+            ];
+            const parseStory = (s: string) => {
+              const lines = (s || '').split('\n').map(l => l.trim()).filter(Boolean);
+              if (lines.length >= 2) return { title: lines[0], body: lines.slice(1).join('\n') };
+              return { title: '', body: (s || '').trim() };
+            };
+            return (
+              <>
+                <Text style={styles.sectionTitle}>오늘 힘들어한 일과</Text>
+                <View style={styles.tomorrowCard}>
+                  {rows.length === 0 && (
+                    <Text style={styles.hardEmpty}>아직 힘들어한 일과가 없어요 🌷</Text>
+                  )}
+                  {rows.map((r, i) => {
+                    const hasStory = !!(r.it.ai_summary || r.it.note);
+                    const parsed = parseStory(r.it.ai_summary || '');
+                    const isLast = i === rows.length - 1;
+                    return (
+                      <View key={`${r.kind}-${r.it.schedule_id}`}>
+                        <View style={styles.hardItem}>
+                          <Text style={styles.hardTimeGray}>{formatTime(r.it.time)}</Text>
+                          <Text style={styles.hardLabel} numberOfLines={1}>{noEmoji(r.it.title)}</Text>
+                          <Text style={[styles.hardTag, { color: r.color, backgroundColor: r.color + '14' }]}>{r.kind}</Text>
+                        </View>
+                        {hasStory ? (
+                          <View style={[styles.storyWrap, isLast && { marginBottom: 2 }]}>
+                            <View style={styles.storyHead}>
+                              <Text style={styles.storyQ}>왜 그랬을까요?</Text>
+                              <View style={styles.aiChip}>
+                                <Ionicons name="sparkles" size={11} color={colors.primary} />
+                                <Text style={styles.aiChipText}>AI 요약</Text>
+                              </View>
+                            </View>
+                            {(r.it.ai_summary ? r.it.ai_summary.split('\n') : [r.it.note]).map((l: any) => (l || '').trim()).filter(Boolean).map((b: string, k: number) => (
+                              <View key={k} style={styles.bulletRow}>
+                                <Text style={styles.bulletDot}>•</Text>
+                                <Text style={styles.bulletText}>{b}</Text>
+                              </View>
+                            ))}
+                          </View>
+                        ) : (
+                          r.detail ? <Text style={[styles.hardReasonInline, r.kind === '오래 걸림' && { color: r.color }]}>{r.detail}</Text> : null
+                        )}
+                      </View>
+                    );
+                  })}
                 </View>
-              </View>
-            </>
-          )}
+              </>
+            );
+          })()}
 
           {/* ── 오늘 아이 자기평가 ── */}
           {data?.self_assessment && (
@@ -367,38 +428,17 @@ export default function GuardianReportScreen({ navigation }: Props) {
         </ScrollView>
       )}
 
-      {/* ── 메뉴 (내일 준비 / 일과 수정 / 로그아웃) ── */}
-      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
-        <TouchableOpacity style={styles.menuBg} activeOpacity={1} onPress={() => setMenuOpen(false)} />
-        <View style={styles.menuPanel}>
-          <Text style={styles.menuPanelTitle}>Menu</Text>
-          <TouchableOpacity style={styles.menuRow} activeOpacity={0.7}
-            onPress={() => { setMenuOpen(false); navigation.navigate('GuardianTomorrow'); }}>
-            <Text style={styles.menuRowText}>내일 일과</Text>
-          </TouchableOpacity>
-          <View style={styles.menuDivider} />
-          <TouchableOpacity style={styles.menuRow} activeOpacity={0.7}
-            onPress={() => { setMenuOpen(false); navigation.navigate('ScheduleEdit'); }}>
-            <Text style={styles.menuRowText}>일과 편집</Text>
-          </TouchableOpacity>
-          <View style={styles.menuDivider} />
-          <TouchableOpacity style={styles.menuRow} activeOpacity={0.7}
-            onPress={() => { setMenuOpen(false); handleLogout(); }}>
-            <Text style={[styles.menuRowText, { color: '#E53E3E' }]}>로그아웃</Text>
-          </TouchableOpacity>
-        </View>
-      </Modal>
-
       {/* 토스트 */}
       <Animated.View style={[styles.toast, { opacity: toastOpacity }]} pointerEvents="none">
         <Text style={styles.toastText}>AI가 저장했어요. 내일 스케줄에 반영할게요.</Text>
       </Animated.View>
-    </SafeAreaView>
+     </View>
+    </AppFrame>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4F6FB' },
+  container: { flex: 1, backgroundColor: '#FFFFFF' },
 
   header: {
     flexDirection: 'row',
@@ -448,32 +488,30 @@ const styles = StyleSheet.create({
 
   content: { padding: 14, gap: 12 },
 
-  sectionTitle: { fontSize: 13, fontWeight: '800', color: colors.primary },
+  sectionTitle: { fontSize: 18, fontWeight: '900', color: '#1E293B' },
 
-  /* 현재 일과 — 당사자 메인처럼 크게 */
+  /* 현재 일과 — 흰 배경(원래색 유지) */
   currentCard: {
     backgroundColor: colors.white,
     borderRadius: 22,
-    paddingVertical: 26,
+    paddingVertical: 24,
     paddingHorizontal: 22,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderLeftWidth: 6,
-    borderLeftColor: colors.guardian,
-    elevation: 4,
-    shadowColor: colors.guardian,
-    shadowOpacity: 0.12,
+    elevation: 3,
+    shadowColor: '#0A1F44',
+    shadowOpacity: 0.08,
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 5 },
   },
+  nowTag: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
+  nowDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary },
+  nowTagText: { fontSize: 12, fontWeight: '800', color: colors.primary, letterSpacing: 0.3 },
   currentLeft: { flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 },
   liveDot: {
     width: 12, height: 12, borderRadius: 6,
     backgroundColor: colors.guardian,
   },
   currentTime: { fontSize: 14, color: '#94A3B8', fontWeight: '700', marginBottom: 4 },
-  currentTitle: { fontSize: 28, fontWeight: '900', color: colors.primary },
+  currentTitle: { fontSize: 28, fontWeight: '900', color: '#1E293B' },
   inProgressBadge: {
     backgroundColor: '#D1FAE5',
     borderRadius: 12,
@@ -551,8 +589,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    borderRadius: 12,
-    padding: 10,
+    backgroundColor: colors.white,
+    paddingVertical: 11,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
   },
   alertLeft: { gap: 2, flex: 1 },
   alertStage: { fontSize: 12, fontWeight: '800' },
@@ -661,15 +702,15 @@ const styles = StyleSheet.create({
   summaryCard: {
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: colors.white, borderRadius: 18, paddingVertical: 18, paddingHorizontal: 8,
-    marginBottom: 6,
-    elevation: 3, shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 10, shadowOffset: { width: 0, height: 3 },
+    elevation: 3, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 10, shadowOffset: { width: 0, height: 3 },
   },
   summaryItem: { flex: 1, alignItems: 'center', gap: 4, paddingVertical: 4, borderRadius: 12 },
-  summaryItemActive: { backgroundColor: colors.guardian + '12' },
-  summaryValue: { fontSize: 24, fontWeight: '900', color: colors.primary },
-  summaryLabel: { fontSize: 11, fontWeight: '700', color: '#94A3B8' },
-  summaryDivider: { width: 1, height: 34, backgroundColor: '#EEF1F8' },
-  summaryHint: { fontSize: 11, color: '#94A3B8', fontWeight: '600', textAlign: 'center', marginTop: -4 },
+  summaryItemActive: { backgroundColor: colors.primary + '10' },
+  summaryDivider: { width: 1, height: 40, backgroundColor: '#EEF1F8' },
+  sumValueRate: { fontSize: 30, fontWeight: '900', color: colors.primary },
+  sumValueBeh: { fontSize: 30, fontWeight: '900', color: '#D64545' },
+  sumLabel: { fontSize: 14, fontWeight: '800', color: '#475569' },
+  summaryHint: { fontSize: 11, color: '#94A3B8', fontWeight: '600', textAlign: 'center', marginTop: -2 },
   expandCard: {
     backgroundColor: colors.white, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 6, marginTop: -4,
     elevation: 2, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 2 },
@@ -686,6 +727,45 @@ const styles = StyleSheet.create({
   detailHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
   detailTitle: { fontSize: 18, fontWeight: '900', color: colors.primary },
   detailX: { fontSize: 18, color: '#94A3B8', fontWeight: '700' },
+
+  // 오늘 힘들어한 일과 (유형 태그형)
+  hardRow2: {
+    flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12,
+    borderBottomWidth: 1, borderBottomColor: '#F1F5F9',
+  },
+  hardBar: { width: 3, alignSelf: 'stretch', borderRadius: 2 },
+  hardTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  hardName2: { flex: 1, fontSize: 15, fontWeight: '800', color: '#1E293B' },
+  hardTime2: { fontSize: 12, fontWeight: '700', color: '#94A3B8' },
+  hardReason2: { fontSize: 13, fontWeight: '600', color: '#64748B', marginTop: 3 },
+  hardTag: { fontSize: 12, fontWeight: '800', paddingHorizontal: 9, paddingVertical: 4, borderRadius: 8, overflow: 'hidden' },
+
+  // 오늘 힘들어한 일과 — 행(오늘 남은 일과처럼 정렬) + 펼침
+  hardItem: {
+    flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 13,
+    borderBottomWidth: 1, borderBottomColor: '#F1F5F9',
+  },
+  hardLabel: { flex: 1, fontSize: 15, color: '#334155', fontWeight: '600' },
+  hardEmpty: { fontSize: 14, color: '#94A3B8', fontWeight: '600', paddingVertical: 10, textAlign: 'center' },
+  hardReasonInline: { fontSize: 13, fontWeight: '600', color: '#64748B', marginTop: -4, marginBottom: 10 },
+
+  // 문제행동 펼침 — 시간 + AI 요약(제목/내용)
+  behItem: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
+  behTime: { fontSize: 13, fontWeight: '800', color: '#94A3B8', marginBottom: 8 },
+  hardTimeGray: { color: '#94A3B8', fontWeight: '800', fontSize: 13, width: 76 },
+
+  // AI 요약 (박스 없이) — 라벨+제목 한 줄, 내용은 아래 회색
+  storyWrap: { backgroundColor: '#F8FAFC', borderRadius: 14, padding: 15, marginTop: 4, marginBottom: 12, borderWidth: 1, borderColor: '#EEF2F7' },
+  storyHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+  storyQ: { fontSize: 17, fontWeight: '900', color: '#1E293B', letterSpacing: -0.3 },
+  aiChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    backgroundColor: colors.primary + '14', paddingHorizontal: 9, paddingVertical: 4, borderRadius: 20,
+  },
+  aiChipText: { fontSize: 11, fontWeight: '800', color: colors.primary },
+  bulletRow: { flexDirection: 'row', gap: 8, marginBottom: 8, alignItems: 'flex-start' },
+  bulletDot: { fontSize: 15, color: '#64748B', lineHeight: 22, marginTop: 1 },
+  bulletText: { flex: 1, fontSize: 14.5, fontWeight: '500', color: '#475569', lineHeight: 22 },
 
   // 자기평가 카드
   moodCard: {

@@ -169,25 +169,71 @@ def get_dashboard(user_id: int, db: Session = Depends(get_db)):
             "is_read": bl.is_read,
         })
 
+    # ── 실제 디텍트된 문제행동만 (보호자 호출/진정단계 제외) + 요약 ──────────────
+    import re as _re
+    def _clean_title(t: str | None) -> str:
+        if not t:
+            return ""
+        return _re.sub(r"[^\w\s가-힣]", "", t).strip()
+
+    def _behavior_summary(bl, title: str | None) -> str:
+        """불릿용 — 줄바꿈으로 구분된 1~2개 문장. context(시작/수행 중) 반영."""
+        trig = bl.trigger or ""
+        t = _clean_title(title)
+        if bl.context == "transition":
+            where = (f"{t} 일과를 시작하려 할 때 " if t else "일과를 시작하려 할 때 ")
+        elif t:
+            where = f"{t} 일과 도중 "
+        else:
+            where = ""
+        if "decibel" in trig or "voice" in trig:
+            first = where + "큰 소리를 내며 흥분한 반응을 보였어요."
+        elif "text" in trig or "refus" in trig:
+            first = where + "하기 싫다는 거부 표현을 했어요."
+        else:
+            first = where + "문제 행동이 감지됐어요."
+        lines = [first]
+        if bl.note:
+            lines.append(f'이유는 "{bl.note}" 라고 했어요.')
+        return "\n".join(lines)
+
+    real_logs = [bl for bl in behavior_logs
+                 if (bl.trigger or "") != "emergency" and bl.stage != FeedbackStage.STAGE_3]
+    behavior_count = len(real_logs)
+    behavior_events = [{
+        "id": bl.id,
+        "logged_at": bl.logged_at.isoformat(),
+        "stage_label": stage_labels.get(bl.stage, bl.stage),
+        "summary": _behavior_summary(bl, schedule_map.get(bl.schedule_id) if bl.schedule_id else None),
+    } for bl in real_logs]
+
     # ── 내일 스케줄 ────────────────────────────────────────────────────────────
     tomorrow_schedules = _get_tomorrow_schedules(user_id, db)
     tomorrow = [
-        {"id": s.id, "title": s.title, "time": s.scheduled_time}
+        {"id": s.id, "title": s.title, "time": s.scheduled_time, "end": s.end_time}
         for s in tomorrow_schedules
     ]
+
+    _user = db.query(User).filter(User.id == user_id).first()
+    user_name = _user.name if _user else ""
 
     # ── 오늘 일과 목록 (항상, 달성/미달성 상세용) ─────────────────────────────
     today_items = []
     for s in today_schedules:
         log = log_map.get(s.id)
         today_items.append({
-            "schedule_id": s.id, "title": s.title, "time": s.scheduled_time,
+            "schedule_id": s.id, "title": s.title, "time": s.scheduled_time, "end": s.end_time,
             "status": (log.status if log else "pending"),
+            "early_stop": (bool(log.early_stop) if log else False),
+            "duration": (log.actual_duration_min if log else None),
+            "note": (log.note if log else None),
+            "ai_summary": (log.ai_summary if log else None),
         })
 
-    # ── 일과별 적합도 (🟢🟡🔴, 최근 7일) ─────────────────────────────────────
-    from services.achievement import schedule_suitability
+    # ── 일과별 적합도 (🟢🟡🔴, 최근 7일) + 주간 달성률 꺾은선 ──────────────────
+    from services.achievement import schedule_suitability, weekly_rates
     suitability = schedule_suitability(user_id, db, days=7)
+    week_rates = weekly_rates(user_id, db, days=7)
 
     # ── 오늘 당사자 자기평가 ───────────────────────────────────────────────────
     today_rep_any = db.query(DailyReport).filter(
@@ -203,12 +249,16 @@ def get_dashboard(user_id: int, db: Session = Depends(get_db)):
         "live_total": live_total,
         "live_rate": live_rate,
         "behavior_alerts": behavior_alerts,
+        "behavior_count": behavior_count,
+        "behavior_events": behavior_events,
         "has_unread": has_unread,
         "ai_summary": daily_report.ai_summary if daily_report else None,
         "tomorrow_schedules": tomorrow,
         "suitability": suitability,
         "self_assessment": self_assessment,
         "today_items": today_items,
+        "weekly_rates": week_rates,
+        "user_name": user_name,
     }
 
 
@@ -251,13 +301,41 @@ def send_emergency(user_id: int, db: Session = Depends(get_db)):
             guardian.push_token,
             "긴급 호출",
             f"{name}님이 보호자를 호출했어요.",
-            {"screen": "GuardianReport"},
+            {"type": "guardian", "screen": "GuardianReport"},
         )
 
     # 3. SMS (Twilio 설정 시)
     result = sms_send(user_id=user_id, message_type="emergency",
                       extra_info="당사자가 직접 보호자 호출을 요청했습니다.")
     return {"success": True, "recipient": result.get("recipient")}
+
+
+class NotifyDoneRequest(BaseModel):
+    schedule_id: int
+
+
+@router.post("/user/{user_id}/notify-done")
+def notify_done(user_id: int, body: NotifyDoneRequest, db: Session = Depends(get_db)):
+    """productive 일과 완료 시 보호자에게 알림 (푸시 + 인앱 알림 기록)."""
+    from services.push import send_push
+    from models.database import Schedule, GuardianNotification
+    sched = db.query(Schedule).filter(Schedule.id == body.schedule_id).first()
+    user = db.query(User).filter(User.id == user_id).first()
+    name = user.name if user else "당사자"
+    title = sched.title if sched else "일과"
+    import re as _re
+    clean = _re.sub(r"[^\w\s가-힣]", "", title).strip()
+    msg = f"{name}님이 '{clean}' 일과를 완료했어요! 👏"
+    # 인앱 알림 기록 (GuardianNotification 있으면)
+    try:
+        db.add(GuardianNotification(user_id=user_id, message=msg))
+        db.commit()
+    except Exception:
+        db.rollback()
+    guardian = db.query(Guardian).filter(Guardian.user_id == user_id).first()
+    if guardian and guardian.push_token:
+        send_push(guardian.push_token, "일과 완료", msg, {"type": "guardian", "screen": "GuardianReport"})
+    return {"ok": True}
 
 
 @router.post("/user/{user_id}/test-sms")

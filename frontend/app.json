@@ -43,7 +43,14 @@
           "microphonePermission": "마이크를 사용해 말씀해 주세요.",
           "speechRecognitionPermission": "음성을 텍스트로 변환하기 위해 필요합니다."
         }
-      ]
-    ]
+      ],
+      "@react-native-community/datetimepicker"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "f1bafcb0-cf71-48f6-82b8-b5401129f7c5"
+      }
+    },
+    "owner": "bamby33"
   }
 }

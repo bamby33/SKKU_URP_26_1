@@ -24,12 +24,15 @@ import ScheduleEditScreen from '../screens/user/ScheduleEditScreen';
 import DailySummaryScreen from '../screens/user/DailySummaryScreen';
 import GuardianTomorrowScreen from '../screens/guardian/GuardianTomorrowScreen';
 import GuardianTodayScreen from '../screens/guardian/GuardianTodayScreen';
+import GuardianRecapScreen from '../screens/guardian/GuardianRecapScreen';
 
 
 export type ScheduleParam = {
   day: number;       // 0=월 … 6=일
-  startSlot: number; // 0 = 06:00, 1 = 06:30 ...
+  startSlot: number; // 0 = 06:00, 1 = 06:30 ... (그리드 위치용)
   endSlot: number;   // exclusive
+  startTime?: string; // 실제 저장용 정확한 시각 "HH:MM" (없으면 slot 사용)
+  endTime?: string;
   activity: string;
   emoji: string;
   color: string;
@@ -70,17 +73,18 @@ export type RootStackParamList = {
   AccountSetup: SignupBase;
   PINSetup: AccountInfo;
   Welcome: AccountInfo & { pin: string };
-  Schedule: { justAchieved?: boolean; achieveRate?: number; behaviorResolved?: boolean; snoozeScheduleId?: number } | undefined;
+  Schedule: { justAchieved?: boolean; achieveRate?: number; behaviorResolved?: boolean; snoozeScheduleId?: number; announceScheduleId?: number; restWithRetry?: boolean } | undefined;
   Feedback: { scheduleId: number; achieved: boolean; title: string };
   Emergency: { stage?: 'stage_1' | 'stage_2' | 'stage_3' };
   GuardianReport: undefined;
-  AIChat: { followUpSchedule?: string; followUpId?: number; followUpAttempt?: number; behaviorAlert?: boolean; behaviorStage1?: boolean; behaviorFollowup?: boolean } | undefined;
+  AIChat: { followUpSchedule?: string; followUpId?: number; followUpAttempt?: number; behaviorAlert?: boolean; behaviorStage1?: boolean; behaviorFollowup?: boolean; spokenText?: string; reasonAsk?: { scheduleId: number; title: string; kind: 'refused' | 'gaveup' } } | undefined;
   TodayScheduleEdit: undefined;
   WeekScheduleEdit: undefined;
   ScheduleEdit: undefined;
   DailySummary: undefined;
   GuardianTomorrow: undefined;
   GuardianToday: undefined;
+  GuardianRecap: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -104,7 +108,7 @@ export default function AppNavigator() {
 
   if (!initialRoute) {
     return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F4F6FB' }}>
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' }}>
         <ActivityIndicator size="large" color="#3B4A6B" />
       </View>
     );
@@ -137,6 +141,7 @@ export default function AppNavigator() {
       <Stack.Screen name="DailySummary" component={DailySummaryScreen} options={{ animation: 'fade' }} />
       <Stack.Screen name="GuardianTomorrow" component={GuardianTomorrowScreen} options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="GuardianToday" component={GuardianTodayScreen} options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="GuardianRecap" component={GuardianRecapScreen} options={{ animation: 'fade' }} />
     </Stack.Navigator>
   );
 }

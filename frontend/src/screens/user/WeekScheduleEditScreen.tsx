@@ -15,6 +15,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
 import { api } from '../../api/client';
+import { SchedIcon } from '../../components/SchedIcon';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'WeekScheduleEdit'>;
@@ -312,7 +313,7 @@ export default function WeekScheduleEditScreen({ navigation }: Props) {
                   backgroundColor: block.color + 'DD',
                 }]}
               >
-                <Text style={styles.blockEmoji}>{block.emoji}</Text>
+                <SchedIcon title={block.name} emoji={block.emoji} size={16} emojiStyle={styles.blockEmoji} />
               </TouchableOpacity>
             );
           })}
@@ -413,7 +414,7 @@ export default function WeekScheduleEditScreen({ navigation }: Props) {
               top:  floating.y - rootOff.current.y - 34,
             }]}
           >
-            <Text style={styles.floatingEmoji}>{floating.item.emoji}</Text>
+            <SchedIcon title={floating.item.label} emoji={floating.item.emoji} size={28} emojiStyle={styles.floatingEmoji} />
             <Text style={styles.floatingLabel}>{floating.item.label}</Text>
           </View>
         )}
@@ -426,10 +427,12 @@ export default function WeekScheduleEditScreen({ navigation }: Props) {
             <Text style={styles.modalTitle}>
               {DAY_LABELS[dropDay]}요일에 추가할까요?
             </Text>
-            <Text style={styles.modalSub}>
-              {dropModal?.item.emoji}{' '}
-              {dropModal?.item.label !== '직접 입력' ? dropModal?.item.label : '새 일과'}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'center' }}>
+              <SchedIcon title={dropModal?.item.label} emoji={dropModal?.item.emoji} size={24} />
+              <Text style={styles.modalSub}>
+                {dropModal?.item.label !== '직접 입력' ? dropModal?.item.label : '새 일과'}
+              </Text>
+            </View>
 
             {dropModal?.item.label === '직접 입력' && (
               <TextInput
