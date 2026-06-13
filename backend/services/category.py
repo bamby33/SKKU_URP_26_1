@@ -4,6 +4,8 @@
 - 누락/기존 데이터엔 제목 키워드로 폴백 분류한다.
 """
 
+import re
+
 CATEGORIES = ("productive", "routine", "fixed", "sleep", "rest")
 
 # 우선순위: sleep > fixed > productive > rest > routine(기본)
@@ -32,3 +34,22 @@ def normalize_category(value: str | None, title: str) -> str:
     if value and value.strip().lower() in CATEGORIES:
         return value.strip().lower()
     return classify_category(title)
+
+
+# 흔한 접미어 — 동일 활동의 표기 차이 흡수 ('운동'='운동 시간', '독서'='독서 하기')
+_NAME_SUFFIXES = ("시간", "하기", "하는시간", "타임")
+
+
+def canonical_key(title: str) -> str:
+    """동일 활동 묶음용 정규 키.
+    이모지·기호·공백 제거 + 흔한 접미어 제거 → '운동'과 '운동 시간'을 같은 키로 본다.
+    집계/제안에서 같은 일과가 표기 차이로 갈라지지 않게 하는 단일 소스."""
+    t = re.sub(r"[^\w가-힣]", "", (title or ""), flags=re.UNICODE).lower()
+    changed = True
+    while changed:
+        changed = False
+        for suf in _NAME_SUFFIXES:
+            if t.endswith(suf) and len(t) > len(suf):
+                t = t[: -len(suf)]
+                changed = True
+    return t or re.sub(r"[^\w가-힣]", "", (title or ""), flags=re.UNICODE).lower() or (title or "").strip()

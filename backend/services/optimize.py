@@ -38,10 +38,11 @@ def next_day_suggestions(user_id: int, db: Session, days: int = 7) -> list[dict]
     if not scheds:
         return []
 
-    # 제목+시각 그룹화 — 같은 제목이라도 시각/길이가 다르면 별개로 (단축 계산이 섞이지 않게)
+    # 활동 정규 키 + 시각 그룹화 — '운동'='운동 시간'은 묶되, 시각이 다르면 별개(단축 계산 분리)
+    from services.category import canonical_key
     groups: dict[tuple, dict] = {}
     for s in scheds:
-        k = (_norm(s.title), s.scheduled_time)
+        k = (canonical_key(s.title), s.scheduled_time)
         g = groups.get(k)
         if not g:
             groups[k] = {"ids": [s.id], "title": s.title, "start": s.scheduled_time,
@@ -89,23 +90,10 @@ def next_day_suggestions(user_id: int, db: Session, days: int = 7) -> list[dict]
                     "action": {"new_end_time": new_end},
                 })
 
-    # ── 2) 3일 연속 미수행 → 재검토 ──
+    # 적합도(완료율·등급 산출에 사용) — '재검토' 제안은 제거됨
     suit = schedule_suitability(user_id, db, days=7)
-    for su in suit:
-        if su.get("category") == "sleep":   # 수면은 최적화/재검토 제외
-            continue
-        last3 = [c["status"] for c in su["cells"][-3:]]
-        if len(last3) == 3 and all(s == "red" for s in last3):
-            suggestions.append({
-                "type": "review",
-                "title": su["title"],
-                "schedule_ids": [su["schedule_id"]],
-                "message": f"'{su['title']}'을(를) 3일 연속 못 했어요. 시간대나 난이도가 맞는지 검토가 필요해요.",
-                "applicable": False,
-                "action": {},
-            })
 
-    # ── 3) 전환 어려움 반복(거절 OR 전환지연>10) → 사이 휴식 자동 삽입(Phase 6) ──
+    # ── 2) 전환 어려움 반복(거절 OR 전환지연>10) → 사이 휴식 자동 삽입 ──
     id_to_sched = {s.id: s for s in scheds}
     pair_count: dict[tuple, int] = {}
     # (a) 전환 거절/무반응
@@ -164,29 +152,15 @@ def next_day_suggestions(user_id: int, db: Session, days: int = 7) -> list[dict]
     ).order_by(DailyReport.report_date.desc()).limit(3).all()
     bad = [r for r in recent_reports if r.self_assessment == "bad"]
     if len(recent_reports) >= 2 and len(bad) >= 2:
-        # 최근 완료율(전체 그룹 green 비율) 추정
-        greens = sum(1 for su in suit if su["grade"] == "green")
-        graded = [su for su in suit if su["grade"] != "unknown"]
-        comp = (greens / len(graded)) if graded else 0
-        if comp >= 0.6:
-            # 뺄 후보는 productive(활동) 일과만 — fixed·routine·sleep은 빼지 않음
-            prod = [su for su in suit if su.get("category") == "productive" and su["grade"] != "unknown"]
-            prod.sort(key=lambda su: {"red": 0, "yellow": 1, "green": 2}.get(su["grade"], 3))
-            target = prod[0] if prod else None
-            if target:
-                msg = f"요즘 '힘들어요'가 많아요. 잘 해내고 있으니, 내일은 '{target['title']}' 같은 활동 일과를 하나 빼서 여유를 줘보세요."
-                ids = [target["schedule_id"]]
-            else:
-                msg = "요즘 '힘들어요'가 많아요. 잘 해내고 있으니, 내일은 활동 일과를 1개쯤 줄여 여유를 줘보세요."
-                ids = []
+        # 뺄 후보는 productive(활동) 일과만 — fixed·routine·sleep은 빼지 않음
+        prod = [su for su in suit if su.get("category") == "productive" and su["grade"] != "unknown"]
+        prod.sort(key=lambda su: {"red": 0, "yellow": 1, "green": 2}.get(su["grade"], 3))
+        target = prod[0] if prod else None
+        if target:
             suggestions.append({
-                "type": "reduce", "title": target["title"] if target else "활동 일과",
-                "schedule_ids": ids, "message": msg, "applicable": False, "action": {},
-            })
-        else:
-            suggestions.append({
-                "type": "add_easy", "title": "전체 일과", "schedule_ids": [],
-                "message": "요즘 '힘들어요'가 많고 달성도 낮아요. 쉬운 일과를 하나 넣어 성취감을 먼저 주는 걸 추천해요.",
+                "type": "reduce", "title": target["title"],
+                "schedule_ids": [target["schedule_id"]],
+                "message": f"요즘 '힘들어요'가 많아요. 내일은 '{target['title']}' 같은 활동 일과를 하나 빼서 여유를 줘보세요.",
                 "applicable": False, "action": {},
             })
 

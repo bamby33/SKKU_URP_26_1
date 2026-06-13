@@ -31,6 +31,10 @@ Notifications.setNotificationHandler({
       const show = role === 'guardian';
       return { shouldShowBanner: show, shouldShowList: show, shouldPlaySound: show, shouldSetBadge: false };
     }
+    // 자기평가: 포그라운드면 화면으로 바로 전환하므로 배너는 띄우지 않음
+    if (type === 'daily_summary') {
+      return { shouldShowBanner: false, shouldShowList: true, shouldPlaySound: false, shouldSetBadge: false };
+    }
     const showSched = isSchedule && !notifState.onHome && !notifState.inBehaviorChat;
     return {
       shouldShowBanner: isSchedule ? showSched : true,

@@ -299,6 +299,7 @@ export default function WeekScheduleEditScreen({ navigation }: Props) {
 
           {blocks.map(block => {
             const h = (block.endSlot - block.startSlot) * SLOT_H;
+            const iconSz = Math.min(DAY_COL - 6, Math.max(16, h - 6));
             return (
               <TouchableOpacity
                 key={block.id}
@@ -313,7 +314,7 @@ export default function WeekScheduleEditScreen({ navigation }: Props) {
                   backgroundColor: block.color + 'DD',
                 }]}
               >
-                <SchedIcon title={block.name} emoji={block.emoji} size={16} emojiStyle={styles.blockEmoji} />
+                <SchedIcon title={block.name} emoji={block.emoji} size={iconSz} emojiStyle={styles.blockEmoji} />
               </TouchableOpacity>
             );
           })}

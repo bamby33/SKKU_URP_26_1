@@ -29,6 +29,7 @@ const RULES: { kw: string[]; img: ImageSourcePropType }[] = [
   { kw: ['아침'], img: IMG.breakfast },
   { kw: ['점심'], img: IMG.lunch },
   { kw: ['저녁'], img: IMG.dinner },
+  { kw: ['식사', '밥', '먹기', '간식'], img: IMG.lunch },  // 일반 '식사'
   { kw: ['목욕', '샤워'], img: IMG.bath },
   { kw: ['세면', '양치', '씻', '수면준비', '잠잘준비'], img: IMG.wash },
   { kw: ['취침', '수면', '잠', '낮잠'], img: IMG.sleep },

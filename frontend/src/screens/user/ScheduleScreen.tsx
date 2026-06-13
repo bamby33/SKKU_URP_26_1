@@ -474,15 +474,25 @@ export default function ScheduleScreen({ navigation, route }: Props) {
 
   // 로컬 알림(배너) 탭 → 홈으로 이동 후 시작 팝업 (어느 화면에 있든 동작)
   useEffect(() => {
-    const sub = Notifications.addNotificationResponseReceivedListener(resp => {
-      const data: any = resp.notification.request.content.data;
+    const handle = (data: any) => {
       if (data?.type === 'schedule' && data.scheduleId) {
         navigation.navigate('Schedule', { announceScheduleId: Number(data.scheduleId) });
       } else if (data?.type === 'daily_summary') {
         navigation.navigate('DailySummary');
       }
+    };
+    const sub = Notifications.addNotificationResponseReceivedListener(resp => {
+      handle(resp.notification.request.content.data);
     });
-    return () => sub.remove();
+    // 앱 사용 중(포그라운드)에 자기평가 시각이 오면 알림 대신 바로 평가 화면으로
+    const subRecv = Notifications.addNotificationReceivedListener(notif => {
+      if (notif.request.content.data?.type === 'daily_summary') navigation.navigate('DailySummary');
+    });
+    // 앱이 꺼진 상태에서 알림 탭으로 켜진 경우(콜드스타트) 마지막 응답 처리
+    Notifications.getLastNotificationResponseAsync().then(resp => {
+      if (resp) handle(resp.notification.request.content.data);
+    }).catch(() => {});
+    return () => { sub.remove(); subRecv.remove(); };
   }, []);
 
   // 배너 탭/홈 복귀로 받은 announceScheduleId → 시작 팝업
@@ -829,6 +839,14 @@ export default function ScheduleScreen({ navigation, route }: Props) {
           );
         })()}
 
+        {/* 취침 시간엔 하루 평가 진입 버튼 상시 노출 (알림 놓쳐도 진입 가능) */}
+        {isSleepingNow && (
+          <TouchableOpacity style={[styles.assessBtn, { borderColor: theme }]} activeOpacity={0.85}
+            onPress={() => navigation.navigate('DailySummary')}>
+            <Text style={[styles.assessBtnText, { color: theme }]}>오늘 하루 평가하기 →</Text>
+          </TouchableOpacity>
+        )}
+
         {/* 오늘 남은 일과 (달성률 포함, flex: 1 — 남은 공간 채움) */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
@@ -1095,7 +1113,9 @@ const styles = StyleSheet.create({
   },
   nowDoneText: { fontSize: 17, fontWeight: '900', color: '#fff' },
   nowEmoji: { fontSize: 80, lineHeight: 90 },
-  nowImg: { width: 112, height: 112, resizeMode: 'contain' },
+  nowImg: { width: 112, height: 112, resizeMode: 'cover', borderRadius: 22 },
+  assessBtn: { borderWidth: 2, borderRadius: 18, paddingVertical: 16, alignItems: 'center', backgroundColor: '#fff' },
+  assessBtnText: { fontSize: 16, fontWeight: '900' },
   nowInfo: { flex: 1, gap: 6 },
   nowChip: {
     alignSelf: 'flex-start', fontSize: 11, fontWeight: '800',
@@ -1164,7 +1184,7 @@ const styles = StyleSheet.create({
   },
   tlTime:  { fontSize: 15, fontWeight: '800', color: '#94A3B8', width: 52 },
   tlEmoji: { fontSize: 30 },
-  tlImg: { width: 36, height: 36, resizeMode: 'contain' },
+  tlImg: { width: 38, height: 38, resizeMode: 'cover', borderRadius: 9 },
   tlTitle: { flex: 1, fontSize: 18, fontWeight: '800', color: '#334155' },
   nowBadge: {
     borderRadius: 20, paddingHorizontal: 11, paddingVertical: 4,
@@ -1179,7 +1199,7 @@ const styles = StyleSheet.create({
   cuOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 28 },
   cuCard: { backgroundColor: '#fff', borderRadius: 24, padding: 26, width: '100%', alignItems: 'center', gap: 6 },
   cuEmoji: { fontSize: 48, marginBottom: 4 },
-  cuImg: { width: 96, height: 96, resizeMode: 'contain', marginBottom: 6 },
+  cuImg: { width: 96, height: 96, resizeMode: 'cover', borderRadius: 20, marginBottom: 6 },
   cuTitle: { fontSize: 18, fontWeight: '900', color: '#334155' },
   cuName: { fontSize: 20, fontWeight: '900', textAlign: 'center', marginVertical: 8 },
   cuBtns: { flexDirection: 'row', gap: 12, marginTop: 10, alignSelf: 'stretch' },
@@ -1236,7 +1256,7 @@ const styles = StyleSheet.create({
     shadowRadius: 34, shadowOffset: { width: 0, height: 16 }, elevation: 24,
   },
   notifyEmoji: { fontSize: 64, lineHeight: 74, marginBottom: 4 },
-  notifyImg: { width: 128, height: 128, resizeMode: 'contain', marginBottom: 8 },
+  notifyImg: { width: 128, height: 128, resizeMode: 'cover', borderRadius: 24, marginBottom: 8 },
   notifyTime:  { fontSize: 13, color: '#94A3B8', fontWeight: '800', letterSpacing: 0.6 },
   notifyTitle: { fontSize: 25, fontWeight: '900', textAlign: 'center', letterSpacing: -0.5, marginTop: 2 },
   notifyMsg:   { fontSize: 15.5, color: '#64748B', fontWeight: '600', textAlign: 'center', lineHeight: 23, marginTop: 4 },

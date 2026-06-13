@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AppFrame from '../../components/AppFrame';
+import { SchedIcon } from '../../components/SchedIcon';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RootStackParamList } from '../../navigation/AppNavigator';
@@ -141,6 +142,8 @@ export default function GuardianRecapScreen({ navigation }: Props) {
     .forEach(s => (s.schedule_ids || []).forEach(id => suggById.set(id, s)));
   const changedTmr = tomorrow.filter(s => suggById.has(s.id));
   const unchangedTmr = tomorrow.filter(s => !suggById.has(s.id));
+  const hasApplicable = changedTmr.length > 0
+    || suggestions.some(s => s.type === 'rest' && s.applicable && s.action.rest_start);
 
   const isLast = step >= 4;
 
@@ -288,7 +291,11 @@ export default function GuardianRecapScreen({ navigation }: Props) {
         {/* 4. AI 추천 내일 시간표 */}
         {step >= 4 && (
           <Block>
-            <Text style={styles.bubble}>AI가 추천한 내일 시간표,{'\n'}어떠신가요?</Text>
+            <Text style={styles.bubble}>
+              {suggestions.length > 0
+                ? 'AI가 추천한 내일 시간표,\n어떠신가요?'
+                : '내일 일과예요.\n오늘 기준으로 바꿀 건 없었어요 😊'}
+            </Text>
             <View style={styles.card}>
               {tomorrow.length === 0 ? (
                 <Text style={styles.cardDim}>내일 등록된 일과가 없어요.</Text>
@@ -302,8 +309,9 @@ export default function GuardianRecapScreen({ navigation }: Props) {
                       <View key={s.id} style={styles.schedBlock}>
                         <View style={styles.schedRow}>
                           <Text style={styles.schedTime}>{s.time}{s.end ? `~${s.end}` : ''}</Text>
+                          <SchedIcon title={s.title} emoji="📋" size={36} radius={9} />
                           <Text style={styles.schedName} numberOfLines={1}>{noEmoji(s.title)}</Text>
-                          {sg ? <Text style={styles.schedCut}>{cut}분 단축</Text> : null}
+                          {sg ? <Text style={styles.schedCut}>{cut > 0 ? `${cut}분 단축` : `${-cut}분 늘림`}</Text> : null}
                         </View>
                         {sg && !applied && (
                           <Text style={styles.schedChangeLine}>
@@ -312,12 +320,22 @@ export default function GuardianRecapScreen({ navigation }: Props) {
                           </Text>
                         )}
                         {sg && applied && (
-                          <Text style={styles.schedDone}>✓ {s.time}~{newEnd}로 단축됨</Text>
+                          <Text style={styles.schedDone}>✓ {s.time}~{newEnd}로 {cut > 0 ? '단축' : '조정'}됨</Text>
                         )}
                       </View>
                     );
                   })}
-                  {changedTmr.length > 0 && !applied && (
+
+                  {/* AI 제안 — 휴식 삽입 / 일과 줄이기 (사유 포함) */}
+                  {suggestions.filter(s => s.type === 'rest' || s.type === 'reduce').map((s, i) => (
+                    <View key={`x${i}`} style={styles.aiSugg}>
+                      <Text style={styles.aiSuggHead}>
+                        ✨ {s.type === 'rest' ? '휴식 넣기' : '일과 줄이기'}{s.title ? ` · ${noEmoji(s.title)}` : ''}
+                      </Text>
+                      <Text style={styles.aiSuggMsg}>{s.message}</Text>
+                    </View>
+                  ))}
+                  {hasApplicable && !applied && (
                     <TouchableOpacity style={styles.applyBtn} activeOpacity={0.85} onPress={applyAll}>
                       <Text style={styles.applyBtnText}>이대로 바꾸기</Text>
                     </TouchableOpacity>
@@ -404,6 +422,9 @@ const styles = StyleSheet.create({
   schedTime: { fontSize: 13, fontWeight: '800', color: '#64748B', width: 100 },
   schedName: { flex: 1, fontSize: 16, fontWeight: '800', color: '#334155' },
   schedCut: { fontSize: 13, fontWeight: '900', color: '#E07B39' },
+  aiSugg: { backgroundColor: '#F4F7FF', borderRadius: 14, padding: 12, marginTop: 8, gap: 4 },
+  aiSuggHead: { fontSize: 14, fontWeight: '900', color: '#5B73C7' },
+  aiSuggMsg: { fontSize: 13, fontWeight: '600', color: '#475569', lineHeight: 19 },
   schedChangeLine: { fontSize: 13, fontWeight: '600', color: '#8A95A5', marginTop: 4, marginLeft: 110, lineHeight: 19 },
   schedNewTime: { fontSize: 13, fontWeight: '900', color: '#E07B39' },
   schedDone: { fontSize: 13, fontWeight: '900', color: '#16A34A', marginTop: 4, marginLeft: 110 },

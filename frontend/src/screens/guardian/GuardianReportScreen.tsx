@@ -20,9 +20,9 @@ import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
 import { api } from '../../api/client';
 import { registerPushToken } from '../../utils/push';
-import { scheduleGuardianRecap } from '../../utils/localNotify';
 import WeeklyRateChart from '../../components/WeeklyRateChart';
 import AppFrame from '../../components/AppFrame';
+import { SchedIcon } from '../../components/SchedIcon';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'GuardianReport'>;
@@ -167,23 +167,51 @@ export default function GuardianReportScreen({ navigation }: Props) {
     }
   }, []);
 
-  // 푸시 토큰 등록 + Recap 알림 예약 + 알림 탭 처리
+  // 오늘 Recap 확인 플래그 (하루 1회 자동 진입)
+  const recapDoneRef = useRef(false);
+  const recapKey = async () => {
+    const uid = await AsyncStorage.getItem('user_id');
+    const d = new Date();
+    return `recapSeen:${uid}:${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+  };
+  const markRecapSeen = useCallback(async () => {
+    recapDoneRef.current = true;
+    try { await AsyncStorage.setItem(await recapKey(), '1'); } catch {}
+  }, []);
+  // 아직 오늘 Recap을 확인 안 했으면 자동 진입 (탭/푸시 타이밍 무관)
+  const autoOpenRecap = useCallback(async () => {
+    if (recapDoneRef.current) return;
+    try { if (await AsyncStorage.getItem(await recapKey())) { recapDoneRef.current = true; return; } } catch {}
+    await markRecapSeen();
+    navigation.navigate('GuardianRecap');
+  }, [navigation, markRecapSeen]);
+
+  // 푸시 토큰 등록 + 알림 처리
   useEffect(() => {
-    AsyncStorage.getItem('user_id').then(async (uid) => {
-      if (!uid) return;
-      registerPushToken(Number(uid));
-      try {
-        const res = await api.get(`/schedules/user/${uid}`);
-        scheduleGuardianRecap(res.data).catch(() => {});
-      } catch {}
+    AsyncStorage.getItem('user_id').then((uid) => {
+      if (uid) registerPushToken(Number(uid));
     });
-    const sub = Notifications.addNotificationResponseReceivedListener((resp) => {
+    // 알림 탭(명시적) → 항상 Recap 이동 + 확인 처리
+    const subResp = Notifications.addNotificationResponseReceivedListener((resp) => {
       const data: any = resp.notification.request.content.data;
-      if (data?.type === 'guardian_recap') navigation.navigate('GuardianRecap');
+      if (data?.type === 'guardian_recap') { markRecapSeen(); navigation.navigate('GuardianRecap'); }
       else fetchDashboard(true);
     });
-    return () => sub.remove();
-  }, [fetchDashboard]);
+    // 앱 사용 중 자기평가 완료 푸시 수신 → 자동 진입(아직 확인 안 했으면)
+    const subRecv = Notifications.addNotificationReceivedListener((notif) => {
+      if (notif.request.content.data?.type === 'guardian_recap') autoOpenRecap();
+    });
+    // 콜드스타트(앱 꺼진 상태에서 알림 탭으로 켜짐)
+    Notifications.getLastNotificationResponseAsync().then((resp) => {
+      if (resp?.notification.request.content.data?.type === 'guardian_recap') { markRecapSeen(); navigation.navigate('GuardianRecap'); }
+    }).catch(() => {});
+    return () => { subResp.remove(); subRecv.remove(); };
+  }, [fetchDashboard, autoOpenRecap, markRecapSeen]);
+
+  // 앱 진입 시: 당사자가 오늘 자기평가를 마쳤는데 아직 Recap 확인 안 했으면 자동으로 띄움
+  useEffect(() => {
+    if (data?.self_assessment) autoOpenRecap();
+  }, [data?.self_assessment, autoOpenRecap]);
 
   // 화면 포커스마다 새로고침 + 1분 타이머
   useFocusEffect(
@@ -274,6 +302,7 @@ export default function GuardianReportScreen({ navigation }: Props) {
               ) : data.today_items.map((item, i) => (
                 <View key={item.schedule_id} style={[styles.tItem, i === data.today_items!.length - 1 && styles.tItemLast]}>
                   <Text style={styles.tTime}>{formatTime(item.time)}</Text>
+                  <SchedIcon title={item.title} emoji="📋" size={30} radius={8} />
                   <Text style={styles.tLabel} numberOfLines={1}>{noEmoji(item.title)}</Text>
                   <View style={[styles.taskBadge, { backgroundColor: statusBg(item.status) }]}>
                     <Text style={styles.taskBadgeText}>{statusLabel(item.status)}</Text>
@@ -317,13 +346,16 @@ export default function GuardianReportScreen({ navigation }: Props) {
           {/* ── 현재 수행 중인 일과 (탭 → 오늘 일과 페이지) ── */}
           <Text style={styles.sectionTitle}>현재 수행 중인 일과</Text>
           {data?.current_schedule ? (
-            <View style={styles.currentCard}>
-              <View style={styles.nowTag}>
-                <View style={styles.nowDot} />
-                <Text style={styles.nowTagText}>지금 진행 중</Text>
+            <View style={[styles.currentCard, { flexDirection: 'row', alignItems: 'center', gap: 16 }]}>
+              <SchedIcon title={data.current_schedule.title} emoji="📋" size={72} radius={16} />
+              <View style={{ flex: 1 }}>
+                <View style={styles.nowTag}>
+                  <View style={styles.nowDot} />
+                  <Text style={styles.nowTagText}>지금 진행 중</Text>
+                </View>
+                <Text style={styles.currentTime}>{formatTime(data.current_schedule.time)}</Text>
+                <Text style={styles.currentTitle}>{noEmoji(data.current_schedule.title)}</Text>
               </View>
-              <Text style={styles.currentTime}>{formatTime(data.current_schedule.time)}</Text>
-              <Text style={styles.currentTitle}>{noEmoji(data.current_schedule.title)}</Text>
             </View>
           ) : (
             <View style={styles.currentCard}>
@@ -343,6 +375,7 @@ export default function GuardianReportScreen({ navigation }: Props) {
                     {remaining.map((item, i) => (
                       <View key={item.schedule_id} style={[styles.tItem, i === remaining.length - 1 && styles.tItemLast]}>
                         <Text style={styles.tTime}>{formatTime(item.time)}</Text>
+                        <SchedIcon title={item.title} emoji="📋" size={34} radius={9} />
                         <Text style={styles.tLabel} numberOfLines={1}>{noEmoji(item.title)}</Text>
                       </View>
                     ))}

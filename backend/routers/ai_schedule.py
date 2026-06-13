@@ -22,9 +22,13 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 
 @router.get("/next-day-suggestions/{user_id}")
 def get_next_day_suggestions(user_id: int, db: Session = Depends(get_db)):
-    """최근 데이터로 내일 일과 조정 제안 목록 반환."""
+    """내일 일과 조정 제안 — LLM 판단(행동·사유 기반) + 규칙 기반 병합. AI 우선·중복 제거."""
     from services.optimize import next_day_suggestions
-    return {"suggestions": next_day_suggestions(user_id, db)}
+    ai = ai_next_day_suggestions(user_id, db)
+    rules = next_day_suggestions(user_id, db)
+    seen = {(a["type"], tuple(a.get("schedule_ids", []))) for a in ai}
+    merged = ai + [r for r in rules if (r["type"], tuple(r.get("schedule_ids", []))) not in seen]
+    return {"suggestions": merged}
 
 
 class ApplyShortenRequest(BaseModel):
@@ -141,6 +145,132 @@ def _clean_json(text: str) -> str:
             if depth == 0:
                 return text[start:i + 1]
     return text[start:]
+
+
+_OPT_ACTIONS = ("time_adjust", "insert_rest", "reduce")
+
+
+def ai_next_day_suggestions(user_id: int, db: Session) -> list[dict]:
+    """LLM이 문제행동·거절 사유·힘들어한 일과를 직접 보고 내일 일과 조정을 '판단'.
+    허용 행위: time_adjust(시간조정) / insert_rest(휴식삽입) / reduce(일과수줄이기).
+    실패 시 빈 리스트 → 호출부에서 규칙 기반으로 폴백."""
+    import json as _json
+    from timeutil import kst_now
+    from services.achievement import schedule_suitability
+    from services.optimize import _mins, _hhmm
+
+    tomorrow_dow = str((kst_now().weekday() + 1) % 7)
+    scheds = db.query(Schedule).filter(
+        Schedule.user_id == user_id, Schedule.is_active == True
+    ).order_by(Schedule.scheduled_time).all()
+    tomorrow = [s for s in scheds if tomorrow_dow in s.days_of_week.split(",")]
+    if not tomorrow:
+        return []
+    by_id = {s.id: s for s in tomorrow}
+
+    # 내일 일과 목록(LLM 입력)
+    lines = []
+    for s in tomorrow:
+        lines.append(f"- id={s.id} | {s.title} | {s.scheduled_time}~{s.end_time or '?'} | 카테고리={s.category or 'routine'}")
+    sched_block = "\n".join(lines)
+
+    # 최근 힘들어한 일과(적합도) 요약
+    suit = schedule_suitability(user_id, db, days=7)
+    hard = [su for su in suit if su["grade"] in ("yellow", "red") or su.get("crisis", 0) > 0 or su.get("early_stop", 0) > 0 or su.get("missed", 0) > 0]
+    hard_lines = [
+        f"- {su['title']}: 등급={su['grade']}, 완료={su.get('completed_full',0)}, 중도포기={su.get('early_stop',0)}, 미수행={su.get('missed',0)}, 도전행동={su.get('crisis',0)}, 전환지연평균={su.get('delay_avg',0)}분"
+        for su in hard
+    ]
+    hard_block = "\n".join(hard_lines) or "(특이사항 없음)"
+
+    behavior = _get_behavior_notes(user_id, db, days=14)
+    missed = _get_missed_reasons(user_id, db, days=14)
+
+    prompt = f"""너는 발달장애 당사자의 '내일 일과'를 최적화하는 전문 보조자다.
+아래 데이터(힘들어한 일과·문제행동 원인·거절 사유)를 근거로, 내일 일과를 더 잘 해낼 수 있게 조정 제안을 한다.
+
+[내일 일과]
+{sched_block}
+
+[최근 7일 힘들어한 일과]
+{hard_block}
+{behavior}{missed}
+가능한 행위(반드시 이 셋 중에서만):
+- time_adjust: 너무 길거나 부담스러운 일과의 종료시각을 당겨 시간을 줄임 (productive/routine만)
+- insert_rest: 특정 일과 직전에 짧은 휴식을 넣어 전환 부담을 낮춤 (sleep 앞은 금지)
+- reduce: 부담이 큰 활동(productive) 일과 하나를 내일은 빼서 여유를 줌
+
+규칙:
+- fixed(기관·병원 등 고정일정)와 sleep(수면)은 시간조정·삭제 금지. 휴식은 sleep 앞만 금지.
+- 근거가 분명한 일과만 제안한다. 억지로 만들지 말고, 조정할 게 없으면 빈 배열을 반환한다.
+- 각 제안에는 반드시 '왜'를 한국어 한 문장 reason으로 단다 (사유/문제행동 근거 인용).
+
+JSON 배열로만 답하라. 각 원소:
+{{"type":"time_adjust|insert_rest|reduce", "schedule_id":정수, "reason":"근거", "new_end_time":"HH:MM(시간조정일 때)", "rest_minutes":정수(휴식일 때, 기본10)}}"""
+
+    try:
+        groq_client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=os.getenv("GROQ_API_KEY"))
+        resp = groq_client.chat.completions.create(
+            model=os.getenv("GROQ_SCHEDULE_MODEL", "llama-3.3-70b-versatile"),
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3, max_tokens=900,
+        )
+        raw = _clean_json(resp.choices[0].message.content or "[]")
+        items = _json.loads(raw)
+        if not isinstance(items, list):
+            return []
+    except Exception:
+        return []
+
+    out: list[dict] = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        typ = it.get("type")
+        sid = it.get("schedule_id")
+        s = by_id.get(sid) if isinstance(sid, int) else None
+        reason = (it.get("reason") or "").strip()
+        if typ not in _OPT_ACTIONS or not s or not reason:
+            continue
+        cat = s.category or "routine"
+        if typ == "time_adjust":
+            if cat in ("fixed", "sleep"):
+                continue
+            ne = it.get("new_end_time")
+            if not (isinstance(ne, str) and ":" in ne) or not s.end_time:
+                continue
+            nem = _mins(ne)
+            # 시작보다 늦고, 하루 안이며, 기존 종료와 달라야 의미 있음 (단축·연장 모두 허용 = '조정')
+            if nem <= _mins(s.scheduled_time) or nem > 23 * 60 + 59 or nem == _mins(s.end_time):
+                continue
+            out.append({
+                "type": "shorten", "title": s.title, "schedule_ids": [s.id],
+                "message": reason, "planned_min": _mins(s.end_time) - _mins(s.scheduled_time),
+                "new_min": nem - _mins(s.scheduled_time),
+                "applicable": True, "action": {"new_end_time": ne}, "ai": True,
+            })
+        elif typ == "insert_rest":
+            if cat == "sleep":
+                continue
+            rlen = it.get("rest_minutes") if isinstance(it.get("rest_minutes"), int) else 10
+            rlen = max(5, min(20, rlen))
+            r_end = s.scheduled_time
+            r_start = _hhmm(_mins(r_end) - rlen)
+            out.append({
+                "type": "rest", "title": s.title, "schedule_ids": [s.id],
+                "message": reason, "applicable": True,
+                "action": {"user_id": user_id, "to_schedule_id": s.id,
+                           "rest_start": r_start, "rest_end": r_end, "days_of_week": s.days_of_week},
+                "ai": True,
+            })
+        elif typ == "reduce":
+            if cat != "productive":
+                continue
+            out.append({
+                "type": "reduce", "title": s.title, "schedule_ids": [s.id],
+                "message": reason, "applicable": False, "action": {}, "ai": True,
+            })
+    return out
 
 
 @router.post("/suggest-schedule/{user_id}")

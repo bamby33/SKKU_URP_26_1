@@ -44,6 +44,16 @@ def create_schedule(data: ScheduleCreate, db: Session = Depends(get_db)):
     from services.category import normalize_category
     payload = data.model_dump()
     payload["category"] = normalize_category(payload.get("category"), payload.get("title", ""))
+    # 완전 중복(같은 user·제목·시각·요일이 이미 활성) 방지 — 기존 것 재사용
+    dup = db.query(Schedule).filter(
+        Schedule.user_id == payload.get("user_id"),
+        Schedule.title == payload.get("title"),
+        Schedule.scheduled_time == payload.get("scheduled_time"),
+        Schedule.days_of_week == payload.get("days_of_week"),
+        Schedule.is_active == True,
+    ).first()
+    if dup:
+        return dup
     schedule = Schedule(**payload)
     db.add(schedule)
     db.commit()
@@ -223,6 +233,19 @@ def set_self_assessment(user_id: int, data: SelfAssessmentRequest, db: Session =
         db.add(rep)
     rep.self_assessment = data.value
     db.commit()
+    # 자기평가 완료 → 보호자에게 '하루 돌아보기' 푸시 (탭하면 Recap, 앱 사용 중이면 자동 전환)
+    try:
+        from services.push import send_push
+        from models.database import Guardian, User
+        g = db.query(Guardian).filter(Guardian.user_id == user_id).first()
+        if g and g.push_token:
+            u = db.query(User).filter(User.id == user_id).first()
+            name = u.name if u else "당사자"
+            send_push(g.push_token, "하루 돌아보기",
+                      f"{name}님이 오늘 하루 평가를 마쳤어요. 함께 돌아볼까요? 🌙",
+                      {"type": "guardian_recap", "screen": "GuardianRecap"})
+    except Exception:
+        pass
     return {"ok": True, "self_assessment": data.value}
 
 

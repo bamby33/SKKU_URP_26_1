@@ -125,15 +125,12 @@ def schedule_suitability(user_id: int, db: Session, days: int = 7) -> list[dict]
         Schedule.user_id == user_id, Schedule.is_active == True
     ).order_by(Schedule.scheduled_time).all()
 
-    import re
-    def _norm(t: str) -> str:
-        # 이모지·공백·기호 제거, 한글/영문/숫자만 남겨 정규화 (제목 변형 통합)
-        return re.sub(r'[^\w가-힣]', '', t or '', flags=re.UNICODE).lower()
+    from services.category import canonical_key
 
-    # 제목 기준 그룹화 (중복 방지): 정규화 키 -> {ids, 가장 이른 시간, 대표 제목}
+    # 활동 정규 키로 그룹화 — '운동'과 '운동 시간'을 같은 일과로 묶음(표기 차이/중복 흡수)
     groups: dict[str, dict] = {}
     for s in scheds:
-        key = _norm(s.title)
+        key = canonical_key(s.title)
         g = groups.get(key)
         if not g:
             groups[key] = {"ids": [s.id], "time": s.scheduled_time, "end": s.end_time,

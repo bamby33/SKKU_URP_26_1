@@ -14,6 +14,7 @@ import { RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
 import TimePickerField from '../../components/TimePickerField';
+import { SchedIcon } from '../../components/SchedIcon';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'ScheduleSetup'>;
@@ -31,17 +32,24 @@ const TIME_W  = 30;
 const GRID_W  = SW - PAD * 2;
 const DAY_COL = (GRID_W - TIME_W) / 7;
 const SLOT_H  = 20;
+// 추가 모달 1단계 가로 카드 이미지 크기
+const PICK_IMG = 132;
 
+// 이미지가 있는 활동만 후보로 (scheduleImage 매칭 가능). '직접 입력'만 예외(이모티콘 폴백)
 const PALETTE = [
+  { emoji: '🌅',  label: '기상',      color: '#FFB74D' },
+  { emoji: '🍚',  label: '식사',      color: '#4CAF7D' },
+  { emoji: '🛁',  label: '씻기·세면', color: '#5BB7C0' },
+  { emoji: '🛀',  label: '목욕',      color: '#4FC3F7' },
+  { emoji: '🏃',  label: '운동',      color: '#AED581' },
   { emoji: '🚶',  label: '산책',      color: '#6B9BF2' },
   { emoji: '📖',  label: '독서·여가', color: '#5BB7C0' },
-  { emoji: '🎵',  label: '음악 감상', color: '#26C6DA' },
-  { emoji: '🧸',  label: '놀이 시간', color: '#FF8A65' },
-  { emoji: '🎨',  label: '그림',      color: '#AB77E8' },
-  { emoji: '🏋️', label: '운동',      color: '#AED581' },
-  { emoji: '🛁',  label: '씻기·세면', color: '#5BB7C0' },
-  { emoji: '🍚',  label: '식사',      color: '#4CAF7D' },
-  { emoji: '➕',  label: '직접 입력', color: '#6B9BF2' },
+  { emoji: '💊',  label: '약 복용',   color: '#E57373' },
+  { emoji: '🏥',  label: '병원',      color: '#F06292' },
+  { emoji: '🏫',  label: '복지관',    color: '#9575CD' },
+  { emoji: '🎒',  label: '등교·외출', color: '#7986CB' },
+  { emoji: '😴',  label: '취침',      color: '#AB77E8' },
+  { emoji: '📝',  label: '직접 입력', color: '#6B9BF2' },
 ];
 
 type Block = {
@@ -98,6 +106,7 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
 
   // 추가 모달
   const [showAdd,   setShowAdd]   = useState(false);
+  const [addStep,   setAddStep]   = useState<'pick' | 'detail'>('pick');
   const [addItem,   setAddItem]   = useState<PaletteItem>(PALETTE[0]);
   const [addName,   setAddName]   = useState('');
   const [addStart,  setAddStart]  = useState('09:00');
@@ -123,12 +132,14 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
     setAddName(PALETTE[0].label);
     setAddStart('09:00');
     setAddEnd('10:00');
+    setAddStep('pick');
     setShowAdd(true);
   };
 
   const pickPalette = (item: PaletteItem) => {
     setAddItem(item);
     setAddName(item.label === '직접 입력' ? '' : item.label);
+    setAddStep('detail');
   };
 
   const confirmAdd = () => {
@@ -286,11 +297,10 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
                 left:   TIME_W + b.day * DAY_COL + 1,
                 width:  DAY_COL - 2,
                 height: bh,
-                backgroundColor: b.color + 'DD',
+                backgroundColor: b.color,
               }]}
             >
-              <Text style={styles.gBlockEmoji}>{b.emoji}</Text>
-              {bh >= 34 && <Text style={styles.gBlockName} numberOfLines={2}>{b.name}</Text>}
+              <Text style={styles.gBlockName} numberOfLines={bh >= 30 ? 2 : 1} adjustsFontSizeToFit minimumFontScale={0.8}>{b.name}</Text>
             </TouchableOpacity>
           );
         })}
@@ -380,14 +390,13 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
               </View>
             ) : (
               dayBlocks.map(b => (
-                <TouchableOpacity key={b.id} style={styles.card} activeOpacity={0.7} onPress={() => openEdit(b)}>
-                  <View style={[styles.cardBar, { backgroundColor: b.color }]} />
-                  <Text style={styles.cardEmoji}>{b.emoji}</Text>
-                  <View style={{ flex: 1 }}>
+                <TouchableOpacity key={b.id} style={[styles.card, { borderLeftColor: b.color }]} activeOpacity={0.7} onPress={() => openEdit(b)}>
+                  <SchedIcon title={b.name} emoji={b.emoji} size={88} radius={16} />
+                  <View style={styles.cardBody}>
                     <Text style={styles.cardName} numberOfLines={1}>{b.name}</Text>
                     <Text style={styles.cardTime}>{b.startTime} ~ {b.endTime}</Text>
                   </View>
-                  <Text style={styles.cardEdit}>수정</Text>
+                  <Text style={styles.cardEdit}>수정 ›</Text>
                 </TouchableOpacity>
               ))
             )}
@@ -395,114 +404,78 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
         </>
       )}
 
-      {/* 하단: 주간모드=드래그 팔레트 / 리스트모드=추가 버튼 */}
-      {viewMode === 'week' ? (
-        <View style={styles.palette}>
-          <Text style={styles.paletteHint}>꾹 눌러서 시간표에 드래그 ↑  ·  블록 탭하면 수정</Text>
-          <View style={styles.paletteGrid}>
-            {PALETTE.map((item, i) => (
-              <View
-                key={i}
-                {...palettePRs[i].panHandlers}
-                style={[styles.palDragItem, { backgroundColor: item.color + '22' }]}
-              >
-                <Text style={styles.palEmoji}>{item.emoji}</Text>
-                <Text style={styles.palLabel}>{item.label}</Text>
-              </View>
-            ))}
-          </View>
-        </View>
-      ) : (
-        <View style={styles.addBtnWrap}>
-          <TouchableOpacity style={styles.addBtn} onPress={openAdd} activeOpacity={0.85}>
-            <Text style={styles.addBtnText}>+ 일과 추가</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* 드래그 중 플로팅 블록 */}
-      {floating && (
-        <View
-          pointerEvents="none"
-          style={[styles.floatingBlock, {
-            left: floating.x - rootOff.current.x - 30,
-            top:  floating.y - rootOff.current.y - 30,
-            backgroundColor: floating.item.color + 'EE',
-          }]}
-        >
-          <Text style={styles.floatingEmoji}>{floating.item.emoji}</Text>
-        </View>
-      )}
+      {/* 하단: 일과 추가 버튼 (요일별·주간 공통) */}
+      <View style={styles.addBtnWrap}>
+        <TouchableOpacity style={styles.addBtn} onPress={openAdd} activeOpacity={0.85}>
+          <Text style={styles.addBtnText}>+ 일과 추가</Text>
+        </TouchableOpacity>
+      </View>
       </View>
 
       {/* 추가 모달 */}
       <Modal visible={showAdd} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
-            <Text style={styles.modalTitle}>일과 추가</Text>
-
-            <Text style={styles.modalLabel}>활동 선택</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
-              <View style={{ flexDirection: 'row', gap: 8 }}>
-                {PALETTE.map((p, i) => (
-                  <TouchableOpacity
-                    key={i}
-                    style={[styles.palItem, addItem.label === p.label && { backgroundColor: p.color + '33', borderColor: p.color }]}
-                    onPress={() => pickPalette(p)}
-                  >
-                    <Text style={styles.palEmoji}>{p.emoji}</Text>
-                    <Text style={styles.palLabel}>{p.label}</Text>
+            {addStep === 'pick' ? (
+              <>
+                <Text style={styles.modalTitle}>어떤 일과를 추가할까요?</Text>
+                <Text style={styles.modalSubtle}>활동을 선택하면 다음에서 시간·요일을 정해요</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pickScroll}>
+                  {PALETTE.map((p, i) => (
+                    <TouchableOpacity key={i} style={styles.pickCard} activeOpacity={0.8} onPress={() => pickPalette(p)}>
+                      <SchedIcon title={p.label === '직접 입력' ? '' : p.label} emoji={p.emoji} size={PICK_IMG} radius={20} />
+                      <Text style={styles.pickCardLabel} numberOfLines={1}>{p.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                <View style={styles.modalBtns}>
+                  <TouchableOpacity onPress={() => setShowAdd(false)} style={[styles.cancelBtn, { flex: 1 }]}><Text style={styles.cancelText}>취소</Text></TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <>
+                <View style={styles.detailHead}>
+                  <TouchableOpacity onPress={() => setAddStep('pick')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                    <Text style={styles.detailBack}>‹ 활동 변경</Text>
                   </TouchableOpacity>
-                ))}
-              </View>
-            </ScrollView>
-
-            <Text style={styles.modalLabel}>일과 이름</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={addName}
-              onChangeText={setAddName}
-              placeholder="일과 이름을 입력해주세요"
-              placeholderTextColor="#bbb"
-            />
-
-            <Text style={styles.modalLabel}>시간</Text>
-            <View style={styles.timeRow}>
-              <TimePickerField value={addStart} onChange={(v) => { setAddStart(v); if (toMin(v) >= toMin(addEnd)) setAddEnd(minToTime(toMin(v) + 60)); }} />
-              <Text style={styles.timeSep}>~</Text>
-              <TimePickerField value={addEnd} onChange={setAddEnd} />
-            </View>
-
-            <Text style={styles.modalLabel}>요일 선택</Text>
-            <View style={styles.dayRow}>
-              {DAY_LABELS.map((d, i) => (
-                <TouchableOpacity key={i}
-                  style={[styles.modalDayBtn, addDays[i] && styles.modalDayBtnOn]}
-                  onPress={() => toggleAddDay(i)}>
-                  <Text style={[styles.modalDayText, addDays[i] && { color: '#fff' }]}>{d}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <View style={styles.presetRow}>
-              <TouchableOpacity style={styles.presetBtn} onPress={() => setAddDayPreset([0,1,2,3,4])}>
-                <Text style={styles.presetText}>주중</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.presetBtn} onPress={() => setAddDayPreset([5,6])}>
-                <Text style={styles.presetText}>주말</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.presetBtn} onPress={() => setAddDayPreset([0,1,2,3,4,5,6])}>
-                <Text style={styles.presetText}>매일</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.modalBtns}>
-              <TouchableOpacity onPress={() => setShowAdd(false)} style={styles.cancelBtn}>
-                <Text style={styles.cancelText}>취소</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={confirmAdd} style={styles.confirmBtn}>
-                <Text style={styles.confirmText}>추가하기</Text>
-              </TouchableOpacity>
-            </View>
+                </View>
+                <View style={styles.detailSel}>
+                  <SchedIcon title={addItem.label === '직접 입력' ? '' : addItem.label} emoji={addItem.emoji} size={64} radius={14} />
+                  <Text style={styles.detailSelName}>{addItem.label === '직접 입력' ? '직접 입력' : addItem.label}</Text>
+                </View>
+                <Text style={styles.modalLabel}>일과 이름</Text>
+                <TextInput style={styles.modalInput} value={addName} onChangeText={setAddName} placeholder="일과 이름을 입력해주세요" placeholderTextColor="#bbb" />
+                <Text style={styles.modalLabel}>시간</Text>
+                <View style={styles.timeRow}>
+                  <TimePickerField value={addStart} onChange={(v) => { setAddStart(v); if (toMin(v) >= toMin(addEnd)) setAddEnd(minToTime(toMin(v) + 60)); }} />
+                  <Text style={styles.timeSep}>~</Text>
+                  <TimePickerField value={addEnd} onChange={setAddEnd} />
+                </View>
+                <Text style={styles.modalLabel}>요일 선택</Text>
+                <View style={styles.dayRow}>
+                  {DAY_LABELS.map((d, i) => (
+                    <TouchableOpacity key={i}
+                      style={[styles.modalDayBtn, addDays[i] && styles.modalDayBtnOn]}
+                      onPress={() => toggleAddDay(i)}>
+                      <Text style={[styles.modalDayText, addDays[i] && { color: '#fff' }]}>{d}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <View style={styles.presetRow}>
+                  <TouchableOpacity style={styles.presetBtn} onPress={() => setAddDayPreset([0,1,2,3,4])}><Text style={styles.presetText}>주중</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.presetBtn} onPress={() => setAddDayPreset([5,6])}><Text style={styles.presetText}>주말</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.presetBtn} onPress={() => setAddDayPreset([0,1,2,3,4,5,6])}><Text style={styles.presetText}>매일</Text></TouchableOpacity>
+                </View>
+                <View style={styles.modalBtns}>
+                  <TouchableOpacity onPress={() => setShowAdd(false)} style={styles.cancelBtn}>
+                    <Text style={styles.cancelText}>취소</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={confirmAdd} style={styles.confirmBtn}>
+                    <Text style={styles.confirmText}>추가하기</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
           </View>
         </View>
       </Modal>
@@ -511,7 +484,10 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
       <Modal visible={!!editBlock} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>{editBlock?.emoji} {editBlock?.name}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'center', marginBottom: 16 }}>
+              <SchedIcon title={editBlock?.name} emoji={editBlock?.emoji} size={28} />
+              <Text style={[styles.modalTitle, { marginBottom: 0 }]}>{editBlock?.name}</Text>
+            </View>
 
             <Text style={styles.modalLabel}>일과 이름</Text>
             <TextInput style={styles.modalInput} value={editName} onChangeText={setEditName}
@@ -576,11 +552,11 @@ const styles = StyleSheet.create({
   gSlotCell: { borderLeftWidth: 0.5, borderBottomWidth: 0.5, borderColor: '#ececec' },
   gSlotHour: { borderBottomColor: '#c8c8c8' },
   gBlock: {
-    position: 'absolute', borderRadius: 4, paddingHorizontal: 1,
+    position: 'absolute', borderRadius: 7, paddingHorizontal: 3, paddingVertical: 2,
     alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
   },
   gBlockEmoji: { fontSize: 13 },
-  gBlockName: { fontSize: 8, lineHeight: 9, color: '#fff', fontWeight: '700', textAlign: 'center', marginTop: 1 },
+  gBlockName: { fontSize: 11, lineHeight: 13, color: '#fff', fontWeight: '800', textAlign: 'center' },
 
   daySelector: {
     flexDirection: 'row', gap: 6, paddingHorizontal: 12, paddingVertical: 10,
@@ -604,16 +580,16 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 14, color: '#94A3B8', textAlign: 'center', lineHeight: 22 },
 
   card: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    backgroundColor: colors.white, borderRadius: 16, padding: 14, paddingLeft: 18,
-    elevation: 2, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
-    overflow: 'hidden',
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    backgroundColor: colors.white, borderRadius: 18, padding: 12, borderLeftWidth: 5,
+    elevation: 2, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 3 },
   },
+  cardBody:  { flex: 1, gap: 2 },
   cardBar:   { position: 'absolute', left: 0, top: 0, bottom: 0, width: 6 },
   cardEmoji: { fontSize: 26 },
-  cardName:  { fontSize: 16, fontWeight: '800', color: colors.primary },
-  cardTime:  { fontSize: 13, color: '#888', fontWeight: '600', marginTop: 3 },
-  cardEdit:  { fontSize: 13, color: colors.primary, fontWeight: '700' },
+  cardName:  { fontSize: 18, fontWeight: '900', color: '#1E293B' },
+  cardTime:  { fontSize: 14, color: '#94A3B8', fontWeight: '700', marginTop: 4 },
+  cardEdit:  { fontSize: 13, color: '#94A3B8', fontWeight: '700' },
 
   addBtnWrap: {
     padding: 16, backgroundColor: colors.white,
@@ -628,17 +604,25 @@ const styles = StyleSheet.create({
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
   modalSheet: {
     backgroundColor: colors.white, borderTopLeftRadius: 24, borderTopRightRadius: 24,
-    padding: 24, paddingBottom: 36,
+    padding: 24, paddingBottom: 36, maxHeight: '90%',
   },
+  modalSubtle: { fontSize: 13, color: '#94A3B8', fontWeight: '600', marginTop: -8, marginBottom: 14 },
+  pickScroll:  { gap: 14, paddingVertical: 6, paddingRight: 12 },
+  pickCard:    { width: 148, alignItems: 'center', gap: 10, paddingVertical: 12, paddingHorizontal: 8, borderRadius: 22, backgroundColor: '#F8FAFC' },
+  pickCardLabel: { fontSize: 16, fontWeight: '800', color: '#334155' },
+  detailHead:  { marginBottom: 10 },
+  detailBack:  { fontSize: 15, fontWeight: '700', color: colors.primary },
+  detailSel:   { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
+  detailSelName: { fontSize: 20, fontWeight: '900', color: '#1E293B' },
   modalCard: {
     backgroundColor: colors.white, borderRadius: 24, padding: 24, margin: 24,
     alignSelf: 'center', width: '88%',
   },
   modalTitle: { fontSize: 18, fontWeight: '900', color: colors.primary, marginBottom: 16 },
-  modalLabel: { fontSize: 12, fontWeight: '700', color: '#666', marginBottom: 8 },
+  modalLabel: { fontSize: 13, fontWeight: '800', color: '#475569', marginTop: 4, marginBottom: 8 },
   modalInput: {
-    backgroundColor: '#F4FAF7', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11,
-    fontSize: 15, color: colors.text, borderWidth: 1.5, borderColor: colors.border, marginBottom: 14,
+    backgroundColor: '#fff', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12,
+    fontSize: 15, color: colors.text, borderWidth: 1.5, borderColor: '#E2E8F0', marginBottom: 16,
   },
 
   palItem: {
@@ -676,18 +660,19 @@ const styles = StyleSheet.create({
 
   dayRow: { flexDirection: 'row', gap: 5, marginBottom: 10 },
   modalDayBtn: {
-    flex: 1, height: 40, borderRadius: 10, backgroundColor: '#EDF3EF',
+    flex: 1, height: 40, borderRadius: 10, backgroundColor: '#fff',
+    borderWidth: 1.5, borderColor: '#E2E8F0',
     alignItems: 'center', justifyContent: 'center',
   },
   modalDayBtnOn: { backgroundColor: colors.primary },
-  modalDayText:  { fontSize: 13, fontWeight: '700', color: colors.primary },
+  modalDayText:  { fontSize: 13, fontWeight: '700', color: '#1E293B' },
 
   presetRow: { flexDirection: 'row', gap: 8, marginBottom: 18 },
   presetBtn: {
     paddingHorizontal: 14, paddingVertical: 7, borderRadius: 16,
-    backgroundColor: '#EDF3EF', borderWidth: 1.5, borderColor: colors.border,
+    backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#E2E8F0',
   },
-  presetText: { fontSize: 12, fontWeight: '700', color: colors.primary },
+  presetText: { fontSize: 12, fontWeight: '700', color: '#1E293B' },
 
   modalBtns:   { flexDirection: 'row', gap: 8, marginTop: 4 },
   deleteBtn:   { flex: 1, paddingVertical: 14, borderRadius: 14, backgroundColor: '#FEE2E2', alignItems: 'center' },

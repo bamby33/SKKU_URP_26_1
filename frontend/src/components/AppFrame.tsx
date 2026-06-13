@@ -44,8 +44,6 @@ export default function AppFrame({
   const isG = r === 'guardian';
   const items: BarItem[] = isG ? [
     { key: 'home', label: '홈', icon: 'home', active: active === 'home', onPress: () => navigation.navigate('GuardianReport') },
-    { key: 'tomorrow', label: '내일 일과', icon: 'calendar-outline', active: active === 'tomorrow', onPress: () => navigation.navigate('GuardianTomorrow') },
-    { key: 'recap', label: '하루 돌아보기', icon: 'moon-outline', active: active === 'recap', onPress: () => navigation.navigate('GuardianRecap') },
     { key: 'edit', label: '일과 편집', icon: 'create-outline', active: active === 'edit', onPress: () => navigation.navigate('ScheduleEdit') },
     { key: 'logout', label: '로그아웃', icon: 'log-out-outline', danger: true, onPress: logout },
   ] : [
