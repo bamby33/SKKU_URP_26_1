@@ -28,7 +28,13 @@ type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'GuardianReport'>;
 };
 
-type CurrentSchedule = { id: number; title: string; time: string };
+type CurrentSchedule = { id: number; title: string; time: string; started?: boolean; status?: 'in_progress' | 'todo' | 'done' | 'missed' };
+const CUR_STATUS: Record<string, { label: string; color: string }> = {
+  in_progress: { label: '지금 진행 중', color: '#2D9D63' },
+  todo:        { label: '지금 할 일',   color: '#E07B39' },
+  done:        { label: '완료했어요',   color: '#2D9D63' },
+  missed:      { label: '못했어요',     color: '#8C9BB0' },
+};
 type ReportItem = { schedule_id: number; title: string; time: string; status: string };
 type TodayReport = {
   date: string; achieved: number; total: number; achievement_rate: number; items: ReportItem[];
@@ -302,7 +308,7 @@ export default function GuardianReportScreen({ navigation }: Props) {
               ) : data.today_items.map((item, i) => (
                 <View key={item.schedule_id} style={[styles.tItem, i === data.today_items!.length - 1 && styles.tItemLast]}>
                   <Text style={styles.tTime}>{formatTime(item.time)}</Text>
-                  <SchedIcon title={item.title} emoji="📋" size={30} radius={8} />
+                  <SchedIcon title={item.title} size={30} radius={8} />
                   <Text style={styles.tLabel} numberOfLines={1}>{noEmoji(item.title)}</Text>
                   <View style={[styles.taskBadge, { backgroundColor: statusBg(item.status) }]}>
                     <Text style={styles.taskBadgeText}>{statusLabel(item.status)}</Text>
@@ -343,23 +349,26 @@ export default function GuardianReportScreen({ navigation }: Props) {
             </View>
           )}
 
-          {/* ── 현재 수행 중인 일과 (탭 → 오늘 일과 페이지) ── */}
-          <Text style={styles.sectionTitle}>현재 수행 중인 일과</Text>
-          {data?.current_schedule ? (
-            <View style={[styles.currentCard, { flexDirection: 'row', alignItems: 'center', gap: 16 }]}>
-              <SchedIcon title={data.current_schedule.title} emoji="📋" size={72} radius={16} />
-              <View style={{ flex: 1 }}>
-                <View style={styles.nowTag}>
-                  <View style={styles.nowDot} />
-                  <Text style={styles.nowTagText}>지금 진행 중</Text>
+          {/* ── 지금 당사자 상황 (진행중/완료/미달성/할 일) ── */}
+          <Text style={styles.sectionTitle}>지금 당사자 상황</Text>
+          {data?.current_schedule ? (() => {
+            const st = CUR_STATUS[data.current_schedule.status || 'todo'] || CUR_STATUS.todo;
+            return (
+              <View style={[styles.currentCard, { flexDirection: 'row', alignItems: 'center', gap: 16 }]}>
+                <SchedIcon title={data.current_schedule.title} size={72} radius={16} />
+                <View style={{ flex: 1 }}>
+                  <View style={styles.nowTag}>
+                    <View style={[styles.nowDot, { backgroundColor: st.color }]} />
+                    <Text style={[styles.nowTagText, { color: st.color }]}>{st.label}</Text>
+                  </View>
+                  <Text style={styles.currentTime}>{formatTime(data.current_schedule.time)}</Text>
+                  <Text style={styles.currentTitle}>{noEmoji(data.current_schedule.title)}</Text>
                 </View>
-                <Text style={styles.currentTime}>{formatTime(data.current_schedule.time)}</Text>
-                <Text style={styles.currentTitle}>{noEmoji(data.current_schedule.title)}</Text>
               </View>
-            </View>
-          ) : (
+            );
+          })() : (
             <View style={styles.currentCard}>
-              <Text style={styles.emptyText}>지금 진행 중인 일과가 없어요.</Text>
+              <Text style={styles.emptyText}>아직 시작한 일과가 없어요.</Text>
             </View>
           )}
 
@@ -375,7 +384,7 @@ export default function GuardianReportScreen({ navigation }: Props) {
                     {remaining.map((item, i) => (
                       <View key={item.schedule_id} style={[styles.tItem, i === remaining.length - 1 && styles.tItemLast]}>
                         <Text style={styles.tTime}>{formatTime(item.time)}</Text>
-                        <SchedIcon title={item.title} emoji="📋" size={34} radius={9} />
+                        <SchedIcon title={item.title} size={34} radius={9} />
                         <Text style={styles.tLabel} numberOfLines={1}>{noEmoji(item.title)}</Text>
                       </View>
                     ))}

@@ -11,6 +11,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
+import { api } from '../../api/client';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'PINSetup'>;
@@ -29,7 +30,7 @@ export default function PINSetupScreen({ navigation, route }: Props) {
   const current = step === 'enter' ? pin : confirmPin;
   const setter = step === 'enter' ? setPin : setConfirmPin;
 
-  const handleKey = (key: string) => {
+  const handleKey = async (key: string) => {
     if (key === '⌫') {
       setter((prev) => prev.slice(0, -1));
       setError('');
@@ -46,6 +47,16 @@ export default function PINSetupScreen({ navigation, route }: Props) {
         setTimeout(() => setStep('confirm'), 300);
       } else {
         if (next === pin) {
+          // PIN 중복 검사 — 이미 쓰는 번호면 막고 다시 입력
+          try {
+            const r = await api.post('/users/pin-check', { pin });
+            if (!r.data.available) {
+              Vibration.vibrate(300);
+              setError(r.data.reason || '이미 사용 중인 PIN이에요. 다른 번호로 해주세요.');
+              setStep('enter'); setPin(''); setConfirmPin('');
+              return;
+            }
+          } catch {}
           navigation.navigate('Welcome', { ...params, pin });
         } else {
           Vibration.vibrate(300);

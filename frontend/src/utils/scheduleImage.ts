@@ -32,7 +32,7 @@ const RULES: { kw: string[]; img: ImageSourcePropType }[] = [
   { kw: ['식사', '밥', '먹기', '간식'], img: IMG.lunch },  // 일반 '식사'
   { kw: ['목욕', '샤워'], img: IMG.bath },
   { kw: ['세면', '양치', '씻', '수면준비', '잠잘준비'], img: IMG.wash },
-  { kw: ['취침', '수면', '잠', '낮잠'], img: IMG.sleep },
+  { kw: ['취침', '수면', '잠자', '낮잠', '잠들', '자기'], img: IMG.sleep },  // '잠' 단독 제외('잠깐' 오탐)
   { kw: ['운동', '체조', '스트레칭'], img: IMG.exercise },
   { kw: ['산책', '걷기'], img: IMG.walk },
   { kw: ['독서', '책', '여가', '자유', '놀이', 'tv', '게임', '음악'], img: IMG.reading },

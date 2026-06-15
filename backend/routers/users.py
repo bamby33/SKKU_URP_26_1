@@ -142,22 +142,39 @@ class PINSetupRequest(BaseModel):
 
 
 class PINLoginRequest(BaseModel):
-    user_id: int
     pin: str
+    user_id: int | None = None   # 선택: 기기에 저장돼 있으면 그걸로, 없으면 PIN으로 탐색
 
 
 @router.post("/pin-login")
 def pin_login(data: PINLoginRequest, db: Session = Depends(get_db)):
-    """당사자 4자리 숫자 PIN 로그인"""
-    user = db.query(User).filter(User.id == data.user_id).first()
-    if not user:
-        raise HTTPException(status_code=401, detail="사용자를 찾을 수 없습니다.")
-
-    record = db.query(UserPIN).filter(UserPIN.user_id == data.user_id, UserPIN.order == 1).first()
-    if not record or not pwd_context.verify(data.pin, record.correct_answer):
+    """당사자 4자리 숫자 PIN 로그인 — user_id가 있으면 그 사용자로, 없으면 PIN으로 사용자 탐색"""
+    if data.user_id is not None:
+        rec = db.query(UserPIN).filter(UserPIN.user_id == data.user_id, UserPIN.order == 1).first()
+        if rec and pwd_context.verify(data.pin, rec.correct_answer):
+            u = db.query(User).filter(User.id == data.user_id).first()
+            if u:
+                return {"user_id": u.id, "name": u.name}
         raise HTTPException(status_code=401, detail="PIN이 올바르지 않아요.")
 
-    return {"user_id": user.id, "name": user.name}
+    # user_id 없음 → 전체 PIN 중에서 일치하는 사용자 탐색 (PIN은 고유하게 관리)
+    for rec in db.query(UserPIN).filter(UserPIN.order == 1).all():
+        if pwd_context.verify(data.pin, rec.correct_answer):
+            u = db.query(User).filter(User.id == rec.user_id).first()
+            if u:
+                return {"user_id": u.id, "name": u.name}
+    raise HTTPException(status_code=401, detail="PIN이 올바르지 않아요.")
+
+
+@router.post("/pin-check")
+def pin_check(data: PINSetupRequest, db: Session = Depends(get_db)):
+    """PIN 사용 가능 여부 — 회원가입 단계에서 중복 미리 확인 (user_id 불필요)"""
+    if not data.pin.isdigit() or len(data.pin) != 4:
+        return {"available": False, "reason": "4자리 숫자를 입력해주세요."}
+    for rec in db.query(UserPIN).filter(UserPIN.order == 1).all():
+        if pwd_context.verify(data.pin, rec.correct_answer):
+            return {"available": False, "reason": "이미 사용 중인 PIN이에요."}
+    return {"available": True}
 
 
 @router.post("/{user_id}/pins")
@@ -169,6 +186,11 @@ def setup_pins(user_id: int, data: PINSetupRequest, db: Session = Depends(get_db
 
     if not data.pin.isdigit() or len(data.pin) != 4:
         raise HTTPException(status_code=400, detail="4자리 숫자를 입력해주세요.")
+
+    # PIN 중복 방지 — 다른 사용자가 이미 쓰는 PIN이면 거부 (PIN으로 로그인 식별하므로 고유해야 함)
+    for rec in db.query(UserPIN).filter(UserPIN.user_id != user_id, UserPIN.order == 1).all():
+        if pwd_context.verify(data.pin, rec.correct_answer):
+            raise HTTPException(status_code=409, detail="이미 사용 중인 PIN이에요. 다른 번호를 입력해주세요.")
 
     db.query(UserPIN).filter(UserPIN.user_id == user_id).delete()
     db.add(UserPIN(

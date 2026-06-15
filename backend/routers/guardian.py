@@ -90,16 +90,31 @@ def get_dashboard(user_id: int, db: Session = Depends(get_db)):
     # ── 현재 수행 중인 일과 ────────────────────────────────────────────────────
     current = _find_current_schedule(today_schedules, now_min)
     if current is None:
-        # 새벽(첫 일과 전): 어제 마지막 일과가 취침이면 그걸 현재로 간주
-        y = _get_yesterday_schedules(user_id, db)
-        if y and any(k in y[-1].title for k in SLEEP_KW):
-            current = y[-1]
+        # 새벽(오늘 첫 일과 시작 전)에만: 어제 마지막 일과가 취침이면 그걸 현재로 간주
+        first_start = _time_to_minutes(today_schedules[0].scheduled_time) if today_schedules else 24 * 60
+        if now_min < first_start:
+            y = _get_yesterday_schedules(user_id, db)
+            if y and any(k in y[-1].title for k in SLEEP_KW):
+                current = y[-1]
+    # 현재 일과의 당사자 상태(진행중/완료/미달성/할 일)를 그대로 보여줌
     current_schedule = None
     if current:
+        from services.achievement import latest_log_map
+        _cur_log = latest_log_map([s.id for s in today_schedules], db).get(current.id)
+        if _cur_log and _cur_log.status == ScheduleStatus.ACHIEVED:
+            status = "done"
+        elif _cur_log and _cur_log.status == ScheduleStatus.MISSED:
+            status = "missed"
+        elif _cur_log and (_cur_log.started_at is not None or _cur_log.response_type == "started"):
+            status = "in_progress"
+        else:
+            status = "todo"
         current_schedule = {
             "id": current.id,
             "title": current.title,
             "time": current.scheduled_time,
+            "status": status,
+            "started": status == "in_progress",
         }
 
     # ── 오늘 일일 리포트 (AI 분석 완료 여부) ──────────────────────────────────

@@ -25,5 +25,8 @@ export function SchedIcon({ title, emoji, size, radius, fill, emojiStyle }: {
       />
     );
   }
-  return <Text style={[{ fontSize: size * 0.82, lineHeight: size * 1.05, textAlign: 'center' }, emojiStyle]}>{emoji || '📋'}</Text>;
+  // 이미지 없으면 이모티콘 폴백 — 명시 emoji > 제목 앞 이모지 > 기본. (당사자·보호자 동일 결과)
+  const leadEmoji = (title || '').match(/\p{Extended_Pictographic}/u)?.[0];
+  const fallback = emoji || leadEmoji || '📋';
+  return <Text style={[{ fontSize: size * 0.82, lineHeight: size * 1.05, textAlign: 'center' }, emojiStyle]}>{fallback}</Text>;
 }

@@ -142,6 +142,7 @@ export default function ScheduleScreen({ navigation, route }: Props) {
   const [popupAchieveRate, setPopupAchieveRate] = useState(0);
   const [doneIds,          setDoneIds]          = useState<Set<number>>(new Set());
   const [missedIds,        setMissedIds]        = useState<Set<number>>(new Set());
+  const [reportLoaded,     setReportLoaded]     = useState(false); // 백엔드 로그 1회 반영 여부 (캐치업 레이스 방지)
   const doneIdsRef         = useRef<Set<number>>(new Set());
   const missedIdsRef       = useRef<Set<number>>(new Set());
   const [catchUp,          setCatchUp]          = useState<Schedule | null>(null);
@@ -149,6 +150,7 @@ export default function ScheduleScreen({ navigation, route }: Props) {
   const [retryActivity,    setRetryActivity]    = useState<Schedule | null>(null); // "다시 해볼래?" 재시도 팝업
   const retryTimerRef      = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scheduleRetryRef   = useRef<((s: Schedule) => void) | null>(null);
+  const retryScheduledRef  = useRef<Set<number>>(new Set()); // 재시도 예약된(대기중) 일과 id — 시작팝업/캐치업 억제
   const [inProg,           setInProg]           = useState<Schedule | null>(null);  // 진행 중인 일과
   const [toast,            setToast]            = useState<string | null>(null);     // 짧은 안내 토스트
   const [encouragePopup,   setEncouragePopup]   = useState<string | null>(null);     // productive 독려 팝업(10분마다, 8초 자동소멸)
@@ -197,7 +199,10 @@ export default function ScheduleScreen({ navigation, route }: Props) {
   const catchUpCandidates = todaySchedules.filter(s =>
     !isSleepingNow &&
     minsLate(s.scheduled_time) >= 10 &&
-    effectiveCurrent?.id !== s.id &&
+    inProg?.id !== s.id &&        // 진행 중(쉬는 중 포함)인 건 제외 — 재시도 흐름이 담당
+    pending?.id !== s.id &&       // 시작 팝업 떠 있는 건 제외
+    retryActivity?.id !== s.id && // 재시도 팝업 대상도 제외
+    !retryScheduledRef.current.has(s.id) && // 재시도 예약 대기 중인 것도 제외
     !doneIds.has(s.id) && !missedIds.has(s.id)
   );
 
@@ -365,8 +370,9 @@ export default function ScheduleScreen({ navigation, route }: Props) {
   const RETRY_MS = 30 * 1000; // 테스트용 30초 (실제: 5 * 60 * 1000)
   const scheduleRetry = (s: Schedule) => {
     if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    retryScheduledRef.current.add(s.id); // 예약~발동 사이 시작팝업/캐치업 안 뜨게
     retryTimerRef.current = setTimeout(() => {
-      if (doneIdsRef.current.has(s.id) || missedIdsRef.current.has(s.id)) return; // 이미 처리됨
+      if (doneIdsRef.current.has(s.id) || missedIdsRef.current.has(s.id)) { retryScheduledRef.current.delete(s.id); return; }
       setRetryActivity(s);
     }, RETRY_MS);
   };
@@ -376,6 +382,7 @@ export default function ScheduleScreen({ navigation, route }: Props) {
     const s = retryActivity;
     setRetryActivity(null);
     if (!s) return;
+    retryScheduledRef.current.delete(s.id); // 재시도 응답함 → 예약 해제
     if (yes) {
       beginInProgress(s); // 다시 진행
     } else {
@@ -484,16 +491,47 @@ export default function ScheduleScreen({ navigation, route }: Props) {
     const sub = Notifications.addNotificationResponseReceivedListener(resp => {
       handle(resp.notification.request.content.data);
     });
-    // 앱 사용 중(포그라운드)에 자기평가 시각이 오면 알림 대신 바로 평가 화면으로
+    // 앱 사용 중(포그라운드)에 자기평가 시각이 오면 알림 대신 바로 평가 화면으로 (하루 1회 가드)
     const subRecv = Notifications.addNotificationReceivedListener(notif => {
-      if (notif.request.content.data?.type === 'daily_summary') navigation.navigate('DailySummary');
+      if (notif.request.content.data?.type === 'daily_summary') maybePromptSelfAssessRef.current?.();
     });
-    // 앱이 꺼진 상태에서 알림 탭으로 켜진 경우(콜드스타트) 마지막 응답 처리
+    // 콜드스타트(앱 꺼진 상태에서 알림 탭으로 켜짐): 일과 알림만 처리.
+    // 자기평가는 홈 복귀 후 시간 기반 자동 진입이 담당 → 재시작 시 홈 화면 유지
     Notifications.getLastNotificationResponseAsync().then(resp => {
-      if (resp) handle(resp.notification.request.content.data);
+      const data: any = resp?.notification.request.content.data;
+      if (data?.type === 'schedule' && data.scheduleId) {
+        navigation.navigate('Schedule', { announceScheduleId: Number(data.scheduleId) });
+      }
     }).catch(() => {});
     return () => { sub.remove(); subRecv.remove(); };
   }, []);
+
+  // 자기평가 시간 기반 자동 진입 (취침 1시간 전부터, 하루 1회) — 알림 못 봐도/일과만 눌러도 홈에서 자동으로 뜸
+  const selfAssessShownRef = useRef(false);
+  const maybePromptSelfAssess = useCallback(async () => {
+    if (selfAssessShownRef.current) return;
+    if (inProgRef.current || pendingRef.current || zeroCheck) return; // 진행/확인 중이면 방해 안 함
+    const sleepS = [...todaySchedRef.current]
+      .filter(s => isSleep(s.title))
+      .sort((a, b) => a.scheduled_time.localeCompare(b.scheduled_time)).pop();
+    if (!sleepS) return;
+    const [sh, sm] = sleepS.scheduled_time.split(':').map(Number);
+    const d = new Date();
+    if (d.getHours() * 60 + d.getMinutes() < sh * 60 + sm - 60) return; // 취침 1시간 전 이후만
+    const uid = userIdRef.current;
+    const key = `selfAssess:${uid}:${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+    try { if (await AsyncStorage.getItem(key)) { selfAssessShownRef.current = true; return; } } catch {}
+    selfAssessShownRef.current = true;
+    try { await AsyncStorage.setItem(key, '1'); } catch {}
+    navigation.navigate('DailySummary');
+  }, [navigation, zeroCheck]);
+  const maybePromptSelfAssessRef = useRef<(() => void) | null>(null);
+  maybePromptSelfAssessRef.current = maybePromptSelfAssess;
+  // 홈에 머무는 동안 자기평가 시각이 오면 자동 진입 (1분마다 체크)
+  useEffect(() => {
+    const t = setInterval(() => { if (isFocusedRef.current) maybePromptSelfAssess(); }, 60000);
+    return () => clearInterval(t);
+  }, [maybePromptSelfAssess]);
 
   // 배너 탭/홈 복귀로 받은 announceScheduleId → 시작 팝업
   useEffect(() => {
@@ -514,10 +552,27 @@ export default function ScheduleScreen({ navigation, route }: Props) {
   // 캐치업 후보가 있으면 하나씩 물어봄. 단, 이번 세션에 이미 보여준 건 다시 안 띄움
   // (홈에 돌아올 때마다 같은 팝업이 반복되던 문제 방지)
   useEffect(() => {
-    if (loading || catchUp) return;
+    if (loading || catchUp || !reportLoaded) return; // 로그 반영 전엔 캐치업 보류 (이미 체크한 게 다시 뜨던 문제)
     const next = catchUpCandidates.find(s => !catchUpSeenRef.current.has(s.id));
     if (next) { catchUpSeenRef.current.add(next.id); setCatchUp(next); }
-  }, [loading, catchUpCandidates.length, catchUp]);
+  }, [loading, catchUpCandidates.length, catchUp, reportLoaded]);
+
+  // 앱을 시작 직후(10분 내) 늦게 열었을 때 현재 일과 시작 팝업 — 정시 인터벌을 놓친 빈틈 보완.
+  // 10분+는 캐치업이, 진행중/시작팝업/재시도/완료 중인 건 각 흐름이 담당하므로 제외.
+  useEffect(() => {
+    if (loading || !screenFocused || !reportLoaded) return;
+    if (inProg || pending || catchUp || zeroCheck || retryActivity) return;
+    const cur = effectiveCurrent;
+    if (!cur || isSleepingNow) return;
+    if (retryScheduledRef.current.has(cur.id)) return;        // 재시도 예약 중이면 시작팝업 안 띄움
+    const late = minsLate(cur.scheduled_time);
+    if (late < 0 || late >= 10) return;                       // 0~9분 늦음만
+    if (doneIds.has(cur.id) || missedIds.has(cur.id)) return;
+    if (announcedRef.current.has(cur.id)) return;
+    announcedRef.current.add(cur.id);
+    announce(cur);
+  }, [loading, screenFocused, reportLoaded, effectiveCurrent?.id, inProg, pending, catchUp, zeroCheck, retryActivity, isSleepingNow]);
+
 
   // 캐치업 응답: 안했으면 재안내·이유 없이 그냥 미달성 (passive)
   const handleCatchUp = async (achieved: boolean) => {
@@ -610,6 +665,7 @@ export default function ScheduleScreen({ navigation, route }: Props) {
     const items = d.items ?? [];
     setDoneIds(new Set<number>(items.filter((it: any) => it.status === 'achieved').map((it: any) => it.schedule_id)));
     setMissedIds(new Set<number>(items.filter((it: any) => it.status === 'missed').map((it: any) => it.schedule_id)));
+    setReportLoaded(true); // 로그 반영 완료 → 이제 캐치업 판단 가능
     return d.achievement_rate ?? 0;
   };
 
@@ -739,6 +795,8 @@ export default function ScheduleScreen({ navigation, route }: Props) {
         .catch(() => {});
       refreshReport(uid).catch(() => {});
     }
+    // 홈 복귀 시 자기평가 시간대면 자동 진입 (일과 알림만 눌렀어도 이어서 뜸)
+    setTimeout(() => maybePromptSelfAssessRef.current?.(), 400);
     return () => { isFocusedRef.current = false; stopMetering(); }; // 화면 떠나면 마이크 정리
   }, []));
 
@@ -909,7 +967,7 @@ export default function ScheduleScreen({ navigation, route }: Props) {
                         numberOfLines={1}>
                         {sName}
                       </Text>
-                      {isCurrent && <Text style={styles.nowLabel}>진행 중</Text>}
+                      {isCurrent && <Text style={styles.nowLabel}>{inProg?.id === s.id ? '진행 중' : '지금 할 일'}</Text>}
                       {sDone && <Text style={[styles.nowLabel, { color: '#2D9D63' }]}>완료</Text>}
                       {sMissed && <Text style={[styles.nowLabel, { color: '#8C9BB0' }]}>괜찮아요</Text>}
                     </View>

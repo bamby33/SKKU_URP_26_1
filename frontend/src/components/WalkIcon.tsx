@@ -11,7 +11,7 @@ import Svg, { Rect, Ellipse, Circle, Line, Path, G } from 'react-native-svg';
 const AG = Animated.createAnimatedComponent(G);
 
 // (테스트) 저녁식사에도 임시로 적용 — 데모에서 바로 보기용
-export const isWalk = (title: string) => /산책|걷기|walk|저녁/i.test(title || '');
+export const isWalk = (title: string) => /산책|걷기|walk/i.test(title || '');
 
 export default function WalkIcon({ size = 40, animated = false }: { size?: number; animated?: boolean }) {
   const t = useRef(new Animated.Value(0)).current;

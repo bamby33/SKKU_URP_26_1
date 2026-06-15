@@ -5,7 +5,7 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Animated, Easing, Alert,
+  View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Animated, Easing, Alert, Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AppFrame from '../../components/AppFrame';
@@ -19,6 +19,7 @@ import { api } from '../../api/client';
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, 'GuardianRecap'> };
 
 const noEmoji = (t: string) => t.replace(/\p{Extended_Pictographic}/gu, '').replace(/️/g, '').trim();
+const AI_CARD_W = Math.round(Dimensions.get('window').width * 0.72);
 const norm = (t: string) => t.replace(/[^\w가-힣]/gu, '').toLowerCase();
 const fmt = (hhmm: string) => {
   const [h, m] = hhmm.split(':').map(Number);
@@ -26,9 +27,9 @@ const fmt = (hhmm: string) => {
 };
 const toMin = (hhmm: string) => { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; };
 const MOOD: Record<string, { emoji: string; label: string; msg: string }> = {
-  good: { emoji: '😊', label: '좋았어요', msg: '기분 좋은 하루였네요!' },
-  soso: { emoji: '😐', label: '그저 그래요', msg: '그런 날도 있죠. 오늘도 충분히 잘했어요.' },
-  bad:  { emoji: '😢', label: '힘들었어요', msg: '힘든 하루였구나. 애쓴 만큼 충분해요.' },
+  good: { emoji: '😊', label: '좋았어요', msg: '오늘 기분 좋게 하루를 보냈어요 😊' },
+  soso: { emoji: '😐', label: '그저 그래요', msg: '오늘은 그저 그런 하루였어요. 내일은 조금 더 가볍게 시작해봐요.' },
+  bad:  { emoji: '😢', label: '힘들었어요', msg: '오늘은 많이 힘들어했어요. 따뜻하게 다독여주세요.' },
 };
 
 type Sugg = { type: string; title: string; schedule_ids: number[]; message: string; applicable: boolean; action: { new_end_time?: string; user_id?: number; rest_start?: string; rest_end?: string; days_of_week?: string }; planned_min?: number; new_min?: number };
@@ -140,6 +141,8 @@ export default function GuardianRecapScreen({ navigation }: Props) {
   const suggById = new Map<number, Sugg>();
   suggestions.filter(s => s.type === 'shorten' && s.action.new_end_time)
     .forEach(s => (s.schedule_ids || []).forEach(id => suggById.set(id, s)));
+  const reduceIds = new Set<number>(suggestions.filter(s => s.type === 'reduce').flatMap(s => s.schedule_ids || []));
+  const restIds = new Set<number>(suggestions.filter(s => s.type === 'rest').flatMap(s => s.schedule_ids || []));
   const changedTmr = tomorrow.filter(s => suggById.has(s.id));
   const unchangedTmr = tomorrow.filter(s => !suggById.has(s.id));
   const hasApplicable = changedTmr.length > 0
@@ -305,36 +308,59 @@ export default function GuardianRecapScreen({ navigation }: Props) {
                     const sg = suggById.get(s.id);
                     const newEnd = sg?.action.new_end_time;
                     const cut = (sg && newEnd && s.end) ? toMin(s.end) - toMin(newEnd) : 0;
+                    const validEnd = s.end && toMin(s.end) > toMin(s.time);   // 깨진 종료시각(종료<시작) 숨김
+                    const willReduce = reduceIds.has(s.id);
+                    const willRest = restIds.has(s.id);
                     return (
-                      <View key={s.id} style={styles.schedBlock}>
+                      <View key={s.id} style={[styles.schedBlock, willReduce && { opacity: 0.5 }]}>
                         <View style={styles.schedRow}>
-                          <Text style={styles.schedTime}>{s.time}{s.end ? `~${s.end}` : ''}</Text>
-                          <SchedIcon title={s.title} emoji="📋" size={36} radius={9} />
+                          <Text style={styles.schedTime}>{s.time}{validEnd ? `~${s.end}` : ''}</Text>
+                          <SchedIcon title={s.title} size={36} radius={9} />
                           <Text style={styles.schedName} numberOfLines={1}>{noEmoji(s.title)}</Text>
-                          {sg ? <Text style={styles.schedCut}>{cut > 0 ? `${cut}분 단축` : `${-cut}분 늘림`}</Text> : null}
+                          {sg ? <Text style={styles.schedCut}>{cut > 0 ? `${cut}분 단축` : `${-cut}분 늘림`}</Text>
+                            : willReduce ? <Text style={[styles.schedCut, { color: '#D64545' }]}>내일 빼기</Text>
+                            : willRest ? <Text style={[styles.schedCut, { color: '#5B73C7' }]}>앞에 휴식</Text> : null}
                         </View>
                         {sg && !applied && (
                           <Text style={styles.schedChangeLine}>
-                            <Text style={styles.schedNewTime}>→ {s.time}~{newEnd}</Text>
-                            {'  ·  '}{sg.message}
+                            <Text style={styles.schedNewTime}>종료 {s.end} → {newEnd}</Text>
                           </Text>
                         )}
                         {sg && applied && (
-                          <Text style={styles.schedDone}>✓ {s.time}~{newEnd}로 {cut > 0 ? '단축' : '조정'}됨</Text>
+                          <Text style={styles.schedDone}>✓ 종료 {newEnd}로 {cut > 0 ? '단축' : '조정'}됨</Text>
                         )}
                       </View>
                     );
                   })}
 
-                  {/* AI 제안 — 휴식 삽입 / 일과 줄이기 (사유 포함) */}
-                  {suggestions.filter(s => s.type === 'rest' || s.type === 'reduce').map((s, i) => (
-                    <View key={`x${i}`} style={styles.aiSugg}>
-                      <Text style={styles.aiSuggHead}>
-                        ✨ {s.type === 'rest' ? '휴식 넣기' : '일과 줄이기'}{s.title ? ` · ${noEmoji(s.title)}` : ''}
-                      </Text>
-                      <Text style={styles.aiSuggMsg}>{s.message}</Text>
-                    </View>
-                  ))}
+                  {/* AI의 추천 — 여러 개면 옆으로 슬라이드 */}
+                  {suggestions.length > 0 && (
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      snapToInterval={AI_CARD_W + 10}
+                      decelerationRate="fast"
+                      contentContainerStyle={{ gap: 10, paddingVertical: 2 }}
+                      style={{ marginTop: 6, alignSelf: 'stretch' }}
+                    >
+                      {suggestions.map((s, i) => {
+                        const nm = noEmoji(s.title || '');
+                        const act = s.type === 'shorten' ? ((s.new_min ?? 0) < (s.planned_min ?? 0) ? '시간 단축' : '시간 늘리기')
+                          : s.type === 'rest' ? '앞 휴식 추가' : s.type === 'reduce' ? '빼기' : '조정';
+                        return (
+                          <View key={`ai${i}`} style={[styles.aiCard, { width: AI_CARD_W }]}>
+                            <View style={styles.aiCardTop}>
+                              <Text style={styles.aiCardHead} numberOfLines={1}>
+                                ✨ AI의 추천 <Text style={styles.aiCardTitle}>· {nm} {act} 제안</Text>
+                              </Text>
+                              {suggestions.length > 1 && <Text style={styles.aiCardCount}>{i + 1}/{suggestions.length}</Text>}
+                            </View>
+                            <Text style={styles.aiCardMsg}>{s.message}</Text>
+                          </View>
+                        );
+                      })}
+                    </ScrollView>
+                  )}
                   {hasApplicable && !applied && (
                     <TouchableOpacity style={styles.applyBtn} activeOpacity={0.85} onPress={applyAll}>
                       <Text style={styles.applyBtnText}>이대로 바꾸기</Text>
@@ -422,9 +448,12 @@ const styles = StyleSheet.create({
   schedTime: { fontSize: 13, fontWeight: '800', color: '#64748B', width: 100 },
   schedName: { flex: 1, fontSize: 16, fontWeight: '800', color: '#334155' },
   schedCut: { fontSize: 13, fontWeight: '900', color: '#E07B39' },
-  aiSugg: { backgroundColor: '#F4F7FF', borderRadius: 14, padding: 12, marginTop: 8, gap: 4 },
-  aiSuggHead: { fontSize: 14, fontWeight: '900', color: '#5B73C7' },
-  aiSuggMsg: { fontSize: 13, fontWeight: '600', color: '#475569', lineHeight: 19 },
+  aiCard: { backgroundColor: '#F4F7FF', borderRadius: 16, padding: 14, gap: 8, borderWidth: 1, borderColor: '#E3E9FB' },
+  aiCardTop: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  aiCardHead: { flex: 1, fontSize: 14, fontWeight: '900', color: '#5B73C7' },
+  aiCardTitle: { fontWeight: '800', color: '#3B4659' },
+  aiCardCount: { fontSize: 12, fontWeight: '800', color: '#9AA7CE' },
+  aiCardMsg: { fontSize: 13.5, fontWeight: '600', color: '#475569', lineHeight: 20, marginTop: 2 },
   schedChangeLine: { fontSize: 13, fontWeight: '600', color: '#8A95A5', marginTop: 4, marginLeft: 110, lineHeight: 19 },
   schedNewTime: { fontSize: 13, fontWeight: '900', color: '#E07B39' },
   schedDone: { fontSize: 13, fontWeight: '900', color: '#16A34A', marginTop: 4, marginLeft: 110 },

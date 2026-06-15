@@ -21,18 +21,6 @@ const KEYS = ['1','2','3','4','5','6','7','8','9','','0','⌫'];
 export default function PINLoginScreen({ navigation }: Props) {
   const [pin, setPin] = useState('');
   const [loading, setLoading] = useState(false);
-  const [userId, setUserId] = useState<string | null>(null);
-
-  useEffect(() => {
-    AsyncStorage.getItem('user_id').then(async (id) => {
-      // 테스트용: 저장된 계정이 없으면 5번(데모당사자=데모보호자가 보는 계정)으로 폴백
-      if (!id) {
-        id = '5';
-        await AsyncStorage.setItem('user_id', id);
-      }
-      setUserId(id);
-    });
-  }, []);
 
   const handleKey = async (key: string) => {
     if (loading) return;
@@ -46,11 +34,12 @@ export default function PINLoginScreen({ navigation }: Props) {
     if (next.length === 4) {
       setLoading(true);
       try {
-        await api.post('/users/pin-login', {
-          user_id: Number(userId),
-          pin: next,
-        });
-        await AsyncStorage.setItem('role', 'user'); // 당사자 역할 — 보호자 푸시 억제 기준
+        // 항상 PIN만으로 사용자 탐색 (PIN 고유 → 정확히 식별, 기기 잔존 user_id 무시)
+        const res = await api.post('/users/pin-login', { pin: next });
+        await AsyncStorage.multiSet([
+          ['user_id', String(res.data.user_id)],
+          ['role', 'user'], // 당사자 역할 — 보호자 푸시 억제 기준
+        ]);
         navigation.reset({ index: 0, routes: [{ name: 'Schedule' }] });
       } catch (e: any) {
         Vibration.vibrate(300);

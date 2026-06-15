@@ -150,6 +150,16 @@ def _clean_json(text: str) -> str:
 _OPT_ACTIONS = ("time_adjust", "insert_rest", "reduce")
 
 
+def _ko_only(s: str) -> str:
+    """LLM reason 정제 — 한자 제거, 率→율, 영어 등급어→한글."""
+    import re as _re
+    s = (s or "").replace("率", "율")
+    for a, b in (("yellow", "주의"), ("red", "힘듦"), ("green", "좋음")):
+        s = _re.sub(a, b, s, flags=_re.IGNORECASE)
+    s = _re.sub(r"[一-鿿]", "", s)          # 남은 한자 제거
+    return _re.sub(r"\s{2,}", " ", s).strip()
+
+
 def ai_next_day_suggestions(user_id: int, db: Session) -> list[dict]:
     """LLM이 문제행동·거절 사유·힘들어한 일과를 직접 보고 내일 일과 조정을 '판단'.
     허용 행위: time_adjust(시간조정) / insert_rest(휴식삽입) / reduce(일과수줄이기).
@@ -178,7 +188,7 @@ def ai_next_day_suggestions(user_id: int, db: Session) -> list[dict]:
     suit = schedule_suitability(user_id, db, days=7)
     hard = [su for su in suit if su["grade"] in ("yellow", "red") or su.get("crisis", 0) > 0 or su.get("early_stop", 0) > 0 or su.get("missed", 0) > 0]
     hard_lines = [
-        f"- {su['title']}: 등급={su['grade']}, 완료={su.get('completed_full',0)}, 중도포기={su.get('early_stop',0)}, 미수행={su.get('missed',0)}, 도전행동={su.get('crisis',0)}, 전환지연평균={su.get('delay_avg',0)}분"
+        f"- {su['title']}: 상태={ {'green':'좋음','yellow':'주의','red':'힘듦','unknown':'기록부족'}.get(su['grade'], su['grade']) }, 완료 {su.get('completed_full',0)}회, 중도포기 {su.get('early_stop',0)}회, 미수행 {su.get('missed',0)}회, 도전행동 {su.get('crisis',0)}회, 전환지연 평균 {su.get('delay_avg',0)}분"
         for su in hard
     ]
     hard_block = "\n".join(hard_lines) or "(특이사항 없음)"
@@ -203,7 +213,9 @@ def ai_next_day_suggestions(user_id: int, db: Session) -> list[dict]:
 규칙:
 - fixed(기관·병원 등 고정일정)와 sleep(수면)은 시간조정·삭제 금지. 휴식은 sleep 앞만 금지.
 - 근거가 분명한 일과만 제안한다. 억지로 만들지 말고, 조정할 게 없으면 빈 배열을 반환한다.
-- 각 제안에는 반드시 '왜'를 한국어 한 문장 reason으로 단다 (사유/문제행동 근거 인용).
+- reason은 **이유를 담아 부드럽게 권유하는 한 문장**이다 (사유·문제행동·완료율 등 근거 + "~ 어떨까요?" 권유형).
+  예: "독서·여가를 자주 힘들어해서, 내일은 시간을 조금 줄여보는 건 어떨까요?"
+- reason은 **순수 한글 문장만** 쓴다. 한자(完了率·率 등)·영어 단어(yellow·red 등)·특수기호를 절대 쓰지 마라. 등급은 '좋음/주의/힘듦'으로, 비율은 '완료율'처럼 한글로 쓴다.
 
 JSON 배열로만 답하라. 각 원소:
 {{"type":"time_adjust|insert_rest|reduce", "schedule_id":정수, "reason":"근거", "new_end_time":"HH:MM(시간조정일 때)", "rest_minutes":정수(휴식일 때, 기본10)}}"""
@@ -229,7 +241,7 @@ JSON 배열로만 답하라. 각 원소:
         typ = it.get("type")
         sid = it.get("schedule_id")
         s = by_id.get(sid) if isinstance(sid, int) else None
-        reason = (it.get("reason") or "").strip()
+        reason = _ko_only((it.get("reason") or "").strip())
         if typ not in _OPT_ACTIONS or not s or not reason:
             continue
         cat = s.category or "routine"

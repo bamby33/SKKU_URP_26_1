@@ -172,7 +172,8 @@ def apply_shorten(schedule_ids: list[int], new_end_time: str, db: Session) -> in
     n = 0
     for sid in schedule_ids:
         s = db.query(Schedule).filter(Schedule.id == sid, Schedule.is_active == True).first()
-        if s:
+        # 종료가 시작보다 빨라지는 잘못된 값은 적용 안 함 (깨진 데이터 방지)
+        if s and _mins(new_end_time) > _mins(s.scheduled_time):
             s.end_time = new_end_time
             n += 1
     db.commit()

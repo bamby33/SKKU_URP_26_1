@@ -500,12 +500,12 @@ export default function AIChatScreen({ navigation, route }: Props) {
                     {msg.aacButtons?.map((b, i) => (
                       <TouchableOpacity
                         key={`a-${i}`}
-                        style={[styles.aacBtn, { backgroundColor: theme + '18', borderColor: theme + '40' }]}
+                        style={[styles.choiceBtn, { borderColor: theme }]}
                         onPress={() => route.params?.behaviorStage1 ? handleStage1Choice(b) : handleSend(b, msg.id)}
                         disabled={aiLoading}
                         activeOpacity={0.75}
                       >
-                        <Text style={[styles.aacBtnText, { color: theme }]}>{b}</Text>
+                        <Text style={[styles.choiceBtnText, { color: theme }]}>{b}</Text>
                       </TouchableOpacity>
                     ))}
                   </View>
@@ -709,11 +709,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row', flexWrap: 'wrap',
   },
   choiceBtn: {
-    paddingHorizontal: 16, paddingVertical: 10,
-    borderRadius: 20, borderWidth: 1.5,
+    paddingHorizontal: 22, paddingVertical: 15,
+    borderRadius: 24, borderWidth: 2,
     backgroundColor: '#fff',
   },
-  choiceBtnText: { fontSize: 14, fontWeight: '700' },
+  choiceBtnText: { fontSize: 18, fontWeight: '800' },
   aacBtn: {
     paddingHorizontal: 14, paddingVertical: 8,
     borderRadius: 20, borderWidth: 1,
