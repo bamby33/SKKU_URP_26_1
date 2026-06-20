@@ -46,10 +46,9 @@ type SignupBase = {
   disabilityType: string;
   disabilityLevel: string;   // 'mild' | 'moderate' | 'severe'
   occupation: string;
-  likes: string[];
-  dislikes: string[];
+  likes: string;
+  dislikes: string;
   problemNotes: string;       // 문제행동 특이사항
-  dailyLife: string;          // 취미 및 일상 자유 입력
   themeColor: string;
   schedules: ScheduleParam[];
 };

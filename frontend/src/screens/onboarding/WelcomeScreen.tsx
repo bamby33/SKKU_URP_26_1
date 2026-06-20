@@ -75,8 +75,8 @@ export default function WelcomeScreen({ navigation, route }: Props) {
       // special_notes에 모든 개인화 정보를 구조화해서 저장
       const notesParts: string[] = [];
       if (occupation) notesParts.push(`직업/활동: ${occupation}`);
-      if (likes?.length) notesParts.push(`좋아하는 것: ${likes.join(', ')}`);
-      if (dislikes?.length) notesParts.push(`싫어하는 것: ${dislikes.join(', ')}`);
+      if (likes?.trim()) notesParts.push(`좋아하는 것: ${likes.trim()}`);
+      if (dislikes?.trim()) notesParts.push(`싫어하는 것: ${dislikes.trim()}`);
       if (problemNotes?.trim()) notesParts.push(`문제행동 특이사항: ${problemNotes.trim()}`);
       const specialNotes = notesParts.length > 0 ? notesParts.join('\n') : null;
 
