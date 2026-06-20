@@ -257,7 +257,7 @@ def chat(
         if context.get("schedule_title"):
             ctx_parts.append(f"[현재 일과: '{context['schedule_title']}' — 이 일과에 대해 대화하세요. 무슨 일과인지 되묻지 마세요.]")
         # 과제분할: 집중이 필요한 생산적 일과에서 어려워하면, 한꺼번에 하라고 하지 말고 아주 작은 첫 단계 하나만 제안
-        if context.get("schedule_category") == "productive" and context.get("behavior_stage") == "stage_1":
+        if context.get("schedule_category") in ("productive", "fixed_productive") and context.get("behavior_stage") == "stage_1":
             ctx_parts.append(
                 f"[이 일과는 집중이 필요한 활동입니다. 한꺼번에 다 하라고 하지 말고, "
                 f"전체를 아주 작은 단계로 쪼개서(과제 분할) '가장 쉬운 첫 단계 하나만 같이 해볼까요?'처럼 "

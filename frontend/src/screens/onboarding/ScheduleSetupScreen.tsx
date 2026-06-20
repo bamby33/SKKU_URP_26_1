@@ -80,6 +80,7 @@ type Block = {
   name: string;
   emoji: string;
   color: string;
+  category?: 'fixed' | 'productive';
 };
 type PaletteItem = (typeof PALETTE)[number];
 
@@ -129,6 +130,8 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
   const [addEnd,    setAddEnd]    = useState('10:00');
   const [addDays,   setAddDays]   = useState<boolean[]>(Array(7).fill(false));
   const [addOverlapError, setAddOverlapError] = useState('');
+  const [addIsFixed, setAddIsFixed]           = useState(false);
+  const [addIsProductive, setAddIsProductive] = useState(false);
 
   // 수정 모달
   const [editBlock,       setEditBlock]      = useState<Block | null>(null);
@@ -161,6 +164,8 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
     setAddStart('09:00');
     setAddEnd('10:00');
     setAddOverlapError('');
+    setAddIsFixed(false);
+    setAddIsProductive(false);
     setShowAdd(true);
   };
 
@@ -186,9 +191,14 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
       const filtered = bedtime
         ? prev.filter(b => !(days.includes(b.day) && isBedtime(b.name)))
         : prev;
+      const cat = addIsFixed && addIsProductive ? 'fixed_productive'
+                : addIsFixed                    ? 'fixed'
+                : addIsProductive               ? 'productive'
+                : undefined;
       const created = days.map(day => ({
         id: nid(), day, startSlot: ss, endSlot: es, startTime: addStart, endTime: endT,
         name, emoji: emojiFor(name), color: scheduleColor(name),
+        ...(cat ? { category: cat } : {}),
       }));
       return [...filtered, ...created];
     });
@@ -277,6 +287,7 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
         day: b.day, startSlot: b.startSlot, endSlot: b.endSlot,
         startTime: b.startTime, endTime: b.endTime,
         activity: b.name, emoji: b.emoji, color: b.color,
+        ...(b.category ? { category: b.category } : {}),
       })),
     });
   };
@@ -455,18 +466,6 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
             <Text style={styles.modalTitle}>일과 추가</Text>
-            <Text style={styles.modalSubtle}>복지관·병원처럼 시간이 정해진 일과를 추가하세요</Text>
-
-            {/* 추천 일과 */}
-            <View style={styles.sugRow}>
-              {FIXED_SUGGESTIONS.map(s => (
-                <TouchableOpacity key={s}
-                  style={[styles.sugChip, addName === s && styles.sugChipOn]}
-                  onPress={() => setAddName(s)}>
-                  <Text style={[styles.sugText, addName === s && styles.sugTextOn]}>{s}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
 
             <Text style={styles.modalLabel}>일과 이름</Text>
             <TextInput style={styles.modalInput} value={addName} onChangeText={setAddName} placeholder="일과 이름을 입력해주세요" placeholderTextColor="#bbb" />
@@ -502,6 +501,36 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
               <TouchableOpacity style={styles.presetBtn} onPress={() => setAddDayPreset([5,6])}><Text style={styles.presetText}>주말</Text></TouchableOpacity>
               <TouchableOpacity style={styles.presetBtn} onPress={() => setAddDayPreset([0,1,2,3,4,5,6])}><Text style={styles.presetText}>매일</Text></TouchableOpacity>
             </View>
+            {/* 일과 유형 선택 (중복 가능) */}
+            <View style={styles.catSection}>
+              <TouchableOpacity
+                style={[styles.catOption, addIsFixed && styles.catOptionOn]}
+                onPress={() => setAddIsFixed(p => !p)}
+                activeOpacity={0.8}
+              >
+                <View style={[styles.catCheck, addIsFixed && styles.catCheckOn]}>
+                  {addIsFixed && <Text style={styles.catCheckMark}>✓</Text>}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.catLabel, addIsFixed && styles.catLabelOn]}>이 일과는 정해진 시간이 있는 일과에요</Text>
+                  <Text style={styles.catHint}>AI가 일과시간을 변경하지않아요</Text>
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.catOption, addIsProductive && styles.catOptionOn]}
+                onPress={() => setAddIsProductive(p => !p)}
+                activeOpacity={0.8}
+              >
+                <View style={[styles.catCheck, addIsProductive && styles.catCheckOn]}>
+                  {addIsProductive && <Text style={styles.catCheckMark}>✓</Text>}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.catLabel, addIsProductive && styles.catLabelOn]}>이 일과는 독려해줬으면 좋겠어요</Text>
+                  <Text style={styles.catHint}>AI가 일과 중 독려 메시지를 남겨요.</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+
             <View style={styles.modalBtns}>
               <TouchableOpacity onPress={() => setShowAdd(false)} style={styles.cancelBtn}>
                 <Text style={styles.cancelText}>취소</Text>
@@ -722,6 +751,23 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#E2E8F0',
   },
   presetText: { fontSize: 12, fontWeight: '700', color: '#1E293B' },
+
+  catSection: { gap: 8, marginBottom: 16 },
+  catOption: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    padding: 14, borderRadius: 14, borderWidth: 1.5, borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  catOptionOn: { borderColor: colors.primary, backgroundColor: '#EDF6F0' },
+  catCheck: {
+    width: 20, height: 20, borderRadius: 5, borderWidth: 2, borderColor: '#CBD5E1',
+    backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center',
+  },
+  catCheckOn: { borderColor: colors.primary, backgroundColor: colors.primary },
+  catCheckMark: { color: '#fff', fontSize: 13, fontWeight: '900', lineHeight: 16 },
+  catLabel: { fontSize: 13, fontWeight: '700', color: '#475569' },
+  catLabelOn: { color: colors.primary },
+  catHint: { fontSize: 11, color: '#94A3B8', marginTop: 2 },
 
   modalBtns:   { flexDirection: 'row', gap: 8, marginTop: 4 },
   deleteBtn:   { flex: 1, paddingVertical: 14, borderRadius: 14, backgroundColor: '#FEE2E2', alignItems: 'center' },

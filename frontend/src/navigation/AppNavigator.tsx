@@ -36,6 +36,7 @@ export type ScheduleParam = {
   activity: string;
   emoji: string;
   color: string;
+  category?: string; // 'fixed' | 'productive' — 보호자가 명시한 경우만
 };
 
 // 회원가입 데이터를 화면간 전달하는 공통 타입

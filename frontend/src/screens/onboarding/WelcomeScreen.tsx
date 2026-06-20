@@ -110,6 +110,7 @@ export default function WelcomeScreen({ navigation, route }: Props) {
           end_time: s.endTime ?? slotToTime(s.endSlot),
           color: s.color,
           days_of_week: String(s.day),
+          ...(s.category ? { category: s.category } : {}),
         });
       }
 
