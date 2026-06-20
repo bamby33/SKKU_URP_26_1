@@ -198,7 +198,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#E2E8F0',
-    borderRadius: 20,
+    borderRadius: 14,
   },
   backText: { fontSize: 15, color: colors.primary, fontWeight: '800' },
   stepRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
@@ -234,7 +234,7 @@ const styles = StyleSheet.create({
 
   disabilityRow: { flexDirection: 'row', gap: 10 },
   disabilityBtn: {
-    flex: 1, backgroundColor: colors.white, borderRadius: 16,
+    flex: 1, backgroundColor: colors.white, borderRadius: 14,
     paddingVertical: 16, paddingHorizontal: 12, alignItems: 'center',
     borderWidth: 2, borderColor: colors.border,
   },
@@ -257,7 +257,7 @@ const styles = StyleSheet.create({
 
   nextBtn: {
     backgroundColor: '#fff',
-    borderRadius: 16,
+    borderRadius: 14,
     paddingVertical: 16,
     alignItems: 'center',
     marginTop: 8,
