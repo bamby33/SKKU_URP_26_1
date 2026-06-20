@@ -121,6 +121,7 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
   const gridRef      = useRef<View>(null);
   const gridBounds   = useRef({ x: 0, y: 0, width: 0, height: 0 });
   const scrollOffset = useRef(0);
+  const scrollRef    = useRef<ScrollView>(null);  // 현재 보이는 시간표 스크롤(주간/요일별) — 폼 열면 맨 아래로
 
   // 추가 모달
   const [showAdd,   setShowAdd]   = useState(false);
@@ -162,6 +163,8 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
     setAddEnd('10:00');
     setAddOverlapError('');
     setShowAdd(true);
+    // 폼이 렌더된 뒤 시간표 스크롤을 맨 아래(폼)로 자동 이동
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 120);
   };
 
   const confirmAdd = () => {
@@ -281,9 +284,71 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
     });
   };
 
+  // ── 일과 추가 폼 (시간표 스크롤 맨 아래에 인라인으로 붙음) ──
+  const renderAddForm = () => (
+    <View style={styles.addForm}>
+      <Text style={styles.addFormTitle}>일과 추가</Text>
+
+      {/* 추천 일과 */}
+      <View style={styles.sugRow}>
+        {FIXED_SUGGESTIONS.map(s => (
+          <TouchableOpacity key={s}
+            style={[styles.sugChip, addName === s && styles.sugChipOn]}
+            onPress={() => setAddName(s)}>
+            <Text style={[styles.sugText, addName === s && styles.sugTextOn]}>{s}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <Text style={styles.modalLabel}>일과 이름</Text>
+      <TextInput style={styles.modalInput} value={addName} onChangeText={setAddName} placeholder="일과 이름을 입력해주세요" placeholderTextColor="#bbb" />
+      <Text style={styles.modalLabel}>시간</Text>
+      <View style={styles.timeRow}>
+        <TimePickerField value={addStart} onChange={(v) => { setAddStart(v); if (toMin(v) >= toMin(addEnd)) setAddEnd(minToTime(toMin(v) + 60)); }} />
+        {isBedtime(addName) ? (
+          <Text style={[styles.timeSep, { color: '#94A3B8' }]}>~ 기상까지(자동)</Text>
+        ) : isInstant(addName) ? (
+          <Text style={[styles.timeSep, { color: '#94A3B8' }]}>에 하기</Text>
+        ) : (
+          <>
+            <Text style={styles.timeSep}>~</Text>
+            <TimePickerField value={addEnd} onChange={setAddEnd} />
+          </>
+        )}
+      </View>
+      {addOverlapError !== '' && (
+        <Text style={styles.overlapErrorText}>{addOverlapError}</Text>
+      )}
+      <Text style={styles.modalLabel}>요일 선택</Text>
+      <View style={styles.dayRow}>
+        {DAY_LABELS.map((d, i) => (
+          <TouchableOpacity key={i}
+            style={[styles.modalDayBtn, addDays[i] && styles.modalDayBtnOn]}
+            onPress={() => toggleAddDay(i)}>
+            <Text style={[styles.modalDayText, addDays[i] && { color: '#fff' }]}>{d}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <View style={styles.presetRow}>
+        <TouchableOpacity style={styles.presetBtn} onPress={() => setAddDayPreset([0,1,2,3,4])}><Text style={styles.presetText}>주중</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.presetBtn} onPress={() => setAddDayPreset([5,6])}><Text style={styles.presetText}>주말</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.presetBtn} onPress={() => setAddDayPreset([0,1,2,3,4,5,6])}><Text style={styles.presetText}>매일</Text></TouchableOpacity>
+      </View>
+      <View style={styles.modalBtns}>
+        <TouchableOpacity onPress={() => setShowAdd(false)} style={styles.cancelBtn}>
+          <Text style={styles.cancelText}>취소</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={confirmAdd} style={styles.confirmBtn}>
+          <Text style={styles.confirmText}>추가하기</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
   // ── 주간 전체 보기 그리드 (드래그로 추가 가능) ──
   const renderWeekGrid = () => (
     <ScrollView
+      ref={scrollRef}
       contentContainerStyle={{ padding: PAD }}
       showsVerticalScrollIndicator={false}
       scrollEnabled={floating === null}
@@ -344,6 +409,7 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
         })}
       </View>
       </View>
+      {showAdd && renderAddForm()}
     </ScrollView>
   );
 
@@ -385,6 +451,7 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
         </TouchableOpacity>
       </View>
 
+      <View style={styles.viewArea}>
       {viewMode === 'week' ? (
         <>
           <View style={styles.hintBar}>
@@ -421,7 +488,7 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
           </View>
 
           {/* 일과 리스트 */}
-          <ScrollView contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
+          <ScrollView ref={scrollRef} contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
             {dayBlocks.length === 0 ? (
               <View style={styles.emptyWrap}>
                 <Text style={styles.emptyText}>{DAY_LABELS[selectedDay]}요일 일과가 없어요.{'\n'}아래 버튼으로 추가해보세요.</Text>
@@ -438,81 +505,19 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
                 </TouchableOpacity>
               ))
             )}
+            {showAdd && renderAddForm()}
           </ScrollView>
         </>
       )}
+      </View>
 
-      {/* 하단: 일과 추가 버튼 (요일별·주간 공통) */}
+      {/* 하단: 일과 추가 (요일별·주간 공통) — 누르면 시간표 스크롤 맨 아래에 폼이 붙음 */}
       <View style={styles.addBtnWrap}>
         <TouchableOpacity style={styles.addBtn} onPress={openAdd} activeOpacity={0.85}>
           <Text style={styles.addBtnText}>+ 일과 추가</Text>
         </TouchableOpacity>
       </View>
       </View>
-
-      {/* 추가 모달 */}
-      <Modal visible={showAdd} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalSheet}>
-            <Text style={styles.modalTitle}>일과 추가</Text>
-            <Text style={styles.modalSubtle}>복지관·병원처럼 시간이 정해진 일과를 추가하세요</Text>
-
-            {/* 추천 일과 */}
-            <View style={styles.sugRow}>
-              {FIXED_SUGGESTIONS.map(s => (
-                <TouchableOpacity key={s}
-                  style={[styles.sugChip, addName === s && styles.sugChipOn]}
-                  onPress={() => setAddName(s)}>
-                  <Text style={[styles.sugText, addName === s && styles.sugTextOn]}>{s}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.modalLabel}>일과 이름</Text>
-            <TextInput style={styles.modalInput} value={addName} onChangeText={setAddName} placeholder="일과 이름을 입력해주세요" placeholderTextColor="#bbb" />
-            <Text style={styles.modalLabel}>시간</Text>
-            <View style={styles.timeRow}>
-              <TimePickerField value={addStart} onChange={(v) => { setAddStart(v); if (toMin(v) >= toMin(addEnd)) setAddEnd(minToTime(toMin(v) + 60)); }} />
-              {isBedtime(addName) ? (
-                <Text style={[styles.timeSep, { color: '#94A3B8' }]}>~ 기상까지(자동)</Text>
-              ) : isInstant(addName) ? (
-                <Text style={[styles.timeSep, { color: '#94A3B8' }]}>에 하기</Text>
-              ) : (
-                <>
-                  <Text style={styles.timeSep}>~</Text>
-                  <TimePickerField value={addEnd} onChange={setAddEnd} />
-                </>
-              )}
-            </View>
-            {addOverlapError !== '' && (
-              <Text style={styles.overlapErrorText}>{addOverlapError}</Text>
-            )}
-            <Text style={styles.modalLabel}>요일 선택</Text>
-            <View style={styles.dayRow}>
-              {DAY_LABELS.map((d, i) => (
-                <TouchableOpacity key={i}
-                  style={[styles.modalDayBtn, addDays[i] && styles.modalDayBtnOn]}
-                  onPress={() => toggleAddDay(i)}>
-                  <Text style={[styles.modalDayText, addDays[i] && { color: '#fff' }]}>{d}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <View style={styles.presetRow}>
-              <TouchableOpacity style={styles.presetBtn} onPress={() => setAddDayPreset([0,1,2,3,4])}><Text style={styles.presetText}>주중</Text></TouchableOpacity>
-              <TouchableOpacity style={styles.presetBtn} onPress={() => setAddDayPreset([5,6])}><Text style={styles.presetText}>주말</Text></TouchableOpacity>
-              <TouchableOpacity style={styles.presetBtn} onPress={() => setAddDayPreset([0,1,2,3,4,5,6])}><Text style={styles.presetText}>매일</Text></TouchableOpacity>
-            </View>
-            <View style={styles.modalBtns}>
-              <TouchableOpacity onPress={() => setShowAdd(false)} style={styles.cancelBtn}>
-                <Text style={styles.cancelText}>취소</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={confirmAdd} style={styles.confirmBtn}>
-                <Text style={styles.confirmText}>추가하기</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
 
       {/* 수정/삭제 모달 */}
       <Modal visible={!!editBlock} transparent animationType="fade">
@@ -571,7 +576,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16, paddingVertical: 10,
     backgroundColor: colors.white, borderBottomWidth: 1, borderBottomColor: colors.border,
   },
-  backBtn:  { paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 20 },
+  backBtn:  { paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 14 },
   backText: { fontSize: 15, color: colors.primary, fontWeight: '800' },
   title:    { fontSize: 16, fontWeight: '900', color: '#1E293B' },
   doneBtn:     { backgroundColor: '#fff', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1.5, borderColor: '#E2E8F0' },
@@ -636,12 +641,18 @@ const styles = StyleSheet.create({
   cardTime:  { fontSize: 14, color: '#94A3B8', fontWeight: '700', marginTop: 4 },
   cardEdit:  { fontSize: 13, color: '#94A3B8', fontWeight: '700' },
 
+  viewArea: { flex: 1 },
+  addForm: {
+    marginTop: 14, padding: 16, backgroundColor: '#F8FAFC',
+    borderRadius: 16, borderWidth: 1, borderColor: '#E2E8F0',
+  },
+  addFormTitle: { fontSize: 17, fontWeight: '900', color: '#1E293B', marginBottom: 4 },
   addBtnWrap: {
     padding: 14, backgroundColor: '#fff',
     borderTopWidth: 1, borderTopColor: '#EEF1F5',
   },
   addBtn: {
-    backgroundColor: '#fff', borderRadius: 12, paddingVertical: 15, alignItems: 'center', borderWidth: 1.5, borderColor: '#E2E8F0',
+    backgroundColor: '#fff', borderRadius: 14, paddingVertical: 15, alignItems: 'center', borderWidth: 1.5, borderColor: '#E2E8F0',
   },
   addBtnText: { color: colors.primary, fontWeight: '800', fontSize: 15, letterSpacing: 0.2 },
 

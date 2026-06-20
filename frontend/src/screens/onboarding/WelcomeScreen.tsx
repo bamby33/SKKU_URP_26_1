@@ -186,7 +186,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#E2E8F0',
-    borderRadius: 20,
+    borderRadius: 14,
   },
   backText: { fontSize: 15, color: colors.primary, fontWeight: '800' },
   robotArea: { alignItems: 'center', flex: 1, justifyContent: 'center' },
@@ -206,7 +206,7 @@ const styles = StyleSheet.create({
 
   btnWrap: { marginTop: 8 },
   startBtn: {
-    backgroundColor: '#fff', borderRadius: 18, paddingVertical: 18,
+    backgroundColor: '#fff', borderRadius: 14, paddingVertical: 18,
     alignItems: 'center', borderWidth: 1.5, borderColor: '#E2E8F0',
   },
   startBtnText: { color: colors.primary, fontWeight: '800', fontSize: 17 },

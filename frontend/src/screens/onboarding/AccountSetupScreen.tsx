@@ -202,7 +202,7 @@ const styles = StyleSheet.create({
   backBtn: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: 14, paddingVertical: 8,
-    backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 20,
+    backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 14,
   },
   backText: { fontSize: 15, color: colors.primary, fontWeight: '800' },
   stepRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
@@ -234,7 +234,7 @@ const styles = StyleSheet.create({
   successText: { fontSize: 12, color: colors.success },
 
   nextBtn: {
-    backgroundColor: '#fff', borderRadius: 16, paddingVertical: 16,
+    backgroundColor: '#fff', borderRadius: 14, paddingVertical: 16,
     alignItems: 'center', marginTop: 8, borderWidth: 1.5, borderColor: '#E2E8F0',
   },
   nextBtnDisabled: { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0' },
