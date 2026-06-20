@@ -67,7 +67,7 @@ const ZERO_TIMEOUT_MS = 6000; // 0단계 무반응 → 1단계
 // 밤 취침만 sleep으로 취급(낮잠 제외) — 낮잠은 일반 일과(시작팝업·달성률·캐치업 대상)로 동작
 const isSleep    = (t: string) => SLEEP_KW.some(k => t.includes(k)) && !t.includes('낮잠');
 // 순간(점) 일과 — 수행시간 없이 '했어요/안했어요'로만 (기상·약복용·세면·양치·출퇴근·등하교)
-const isInstant  = (t: string) => /기상|일어나|복용|투약|출근|등교|등원|퇴근|하교|하원|세면|양치|씻/.test(t || '');
+const isInstant  = (t: string) => /기상|일어나|복용|투약|출근|등교|등원|퇴근|하교|하원|세면|양치/.test(t || '');
 // ⚠️ 테스트용: true면 자기평가 영구 '하루 1회' 플래그(AsyncStorage)를 무시 → 앱 재시작마다 다시 테스트 가능. 실배포 전 false로.
 const SELF_ASSESS_TEST = false;
 // 자기평가를 이번 앱 세션에 띄운 날짜 — 모듈 레벨이라 화면 재마운트해도 유지(시간 폴백 1분 루프 방지). 앱 재시작 시 초기화.

@@ -73,7 +73,7 @@ export default function PersonInfoScreen({ navigation }: Props) {
 
           {/* 타이틀 */}
           <View style={styles.titleArea}>
-            <Text style={styles.title}>당사자 정보를{'\n'}알려주세요</Text>
+            <Text style={styles.title}>당사자 정보를 알려주세요</Text>
             <Text style={styles.subtitle}>보호하시는 분의 정보를 입력해주세요</Text>
           </View>
 
@@ -208,15 +208,15 @@ const styles = StyleSheet.create({
 
   content: { padding: 24, gap: 22 },
 
-  titleArea: { alignItems: 'center', gap: 8, paddingVertical: 8 },
+  titleArea: { alignItems: 'flex-start', gap: 8, paddingVertical: 8 },
   title: {
-    fontSize: 24, fontWeight: '900', color: colors.primary,
-    textAlign: 'center', lineHeight: 32,
+    fontSize: 24, fontWeight: '900', color: '#1E293B',
+    lineHeight: 32,
   },
-  subtitle: { fontSize: 13, color: '#888', textAlign: 'center' },
+  subtitle: { fontSize: 13, color: '#888' },
 
   fieldGroup: { gap: 8 },
-  fieldLabel: { fontSize: 13, fontWeight: '700', color: colors.primary },
+  fieldLabel: { fontSize: 13, fontWeight: '700', color: '#334155' },
   optional: { fontSize: 11, fontWeight: '500', color: '#aaa' },
   input: {
     backgroundColor: colors.white,
@@ -230,7 +230,7 @@ const styles = StyleSheet.create({
   },
   ageRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   ageInput: { flex: 1 },
-  ageSuffix: { fontSize: 16, fontWeight: '700', color: colors.primary },
+  ageSuffix: { fontSize: 16, fontWeight: '700', color: '#334155' },
 
   disabilityRow: { flexDirection: 'row', gap: 10 },
   disabilityBtn: {
@@ -239,7 +239,7 @@ const styles = StyleSheet.create({
     borderWidth: 2, borderColor: colors.border,
   },
   disabilityBtnSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
-  disabilityLabel: { fontSize: 14, fontWeight: '800', color: colors.primary },
+  disabilityLabel: { fontSize: 14, fontWeight: '800', color: '#334155' },
   disabilityLabelSelected: { color: colors.white },
 
   levelCol: { gap: 8 },
@@ -249,24 +249,21 @@ const styles = StyleSheet.create({
     padding: 14, borderWidth: 2, borderColor: colors.border,
   },
   levelBtnSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
-  levelLabel: { fontSize: 14, fontWeight: '800', color: colors.primary },
+  levelLabel: { fontSize: 14, fontWeight: '800', color: '#334155' },
   levelLabelSelected: { color: colors.white },
   levelSub: { fontSize: 11, color: '#999', marginTop: 2 },
   levelSubSelected: { color: 'rgba(255,255,255,0.8)' },
   levelCheck: { fontSize: 12, color: colors.white, fontWeight: '700' },
 
   nextBtn: {
-    backgroundColor: colors.primary,
+    backgroundColor: '#fff',
     borderRadius: 16,
     paddingVertical: 16,
     alignItems: 'center',
     marginTop: 8,
-    elevation: 4,
-    shadowColor: colors.primary,
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 3 },
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
   },
-  nextBtnDisabled: { backgroundColor: '#A8D8C0', elevation: 0, shadowOpacity: 0 },
-  nextBtnText: { color: colors.white, fontWeight: '800', fontSize: 16 },
+  nextBtnDisabled: { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0' },
+  nextBtnText: { color: colors.primary, fontWeight: '800', fontSize: 16 },
 });

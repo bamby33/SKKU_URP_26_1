@@ -28,7 +28,7 @@ const DAY_LABELS = ['월', '화', '수', '목', '금', '토', '일'];
 // 밤 취침(낮잠 제외) — 끝 시간을 받지 않고 '기상까지' 자동 처리
 const isBedtime = (name: string) => /취침|수면|자기|잠자기|잠자|잠들/.test(name || '') && !(name || '').includes('낮잠');
 // 순간(점) 일과 — 끝 시간 없이 그 시각에 (기상·약복용·세면·양치·출퇴근·등하교)
-const isInstant = (name: string) => /기상|일어나|복용|투약|출근|등교|등원|퇴근|하교|하원|세면|양치|씻/.test(name || '');
+const isInstant = (name: string) => /기상|일어나|복용|투약|출근|등교|등원|퇴근|하교|하원|세면|양치/.test(name || '');
 
 // 주간 전체 보기 그리드 치수
 const { width: SW } = Dimensions.get('window');
@@ -44,8 +44,8 @@ const PICK_IMG = 132;
 const PALETTE = [
   { emoji: '🌅',  label: '기상',      color: '#FFB74D' },
   { emoji: '🍚',  label: '식사',      color: '#4CAF7D' },
-  { emoji: '🛁',  label: '씻기·세면', color: '#5BB7C0' },
-  { emoji: '🛀',  label: '목욕',      color: '#4FC3F7' },
+  { emoji: '🧼',  label: '세면',      color: '#4FC3F7' },
+  { emoji: '🛁',  label: '씻기',      color: '#FFB74D' },
   { emoji: '🏃',  label: '운동',      color: '#AED581' },
   { emoji: '🚶',  label: '산책',      color: '#6B9BF2' },
   { emoji: '📖',  label: '독서·여가', color: '#5BB7C0' },
@@ -99,7 +99,7 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
 
   const [blocks, setBlocks]         = useState<Block[]>(initBlocks);
   const [selectedDay, setSelectedDay] = useState(0);
-  const [viewMode, setViewMode]     = useState<'list' | 'week'>('list');
+  const [viewMode, setViewMode]     = useState<'list' | 'week'>('week'); // 주간 전체 보기 먼저
 
   // 주간 그리드 드래그
   const [floating, setFloating] = useState<{ item: PaletteItem; x: number; y: number } | null>(null);
@@ -349,16 +349,16 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
       {/* 보기 전환 토글 */}
       <View style={styles.viewToggle}>
         <TouchableOpacity
-          style={[styles.toggleBtn, viewMode === 'list' && styles.toggleBtnOn]}
-          onPress={() => setViewMode('list')}
-        >
-          <Text style={[styles.toggleText, viewMode === 'list' && styles.toggleTextOn]}>요일별 보기</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
           style={[styles.toggleBtn, viewMode === 'week' && styles.toggleBtnOn]}
           onPress={() => setViewMode('week')}
         >
           <Text style={[styles.toggleText, viewMode === 'week' && styles.toggleTextOn]}>주간 전체 보기</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.toggleBtn, viewMode === 'list' && styles.toggleBtnOn]}
+          onPress={() => setViewMode('list')}
+        >
+          <Text style={[styles.toggleText, viewMode === 'list' && styles.toggleTextOn]}>요일별 보기</Text>
         </TouchableOpacity>
       </View>
 
@@ -559,18 +559,18 @@ const styles = StyleSheet.create({
   },
   backBtn:  { paddingHorizontal: 14, paddingVertical: 8, backgroundColor: colors.primaryBg, borderRadius: 20 },
   backText: { fontSize: 14, color: colors.primary, fontWeight: '800' },
-  title:    { fontSize: 16, fontWeight: '900', color: colors.primary },
-  doneBtn:     { backgroundColor: colors.primary, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 8 },
-  doneBtnText: { color: '#fff', fontWeight: '800', fontSize: 14 },
+  title:    { fontSize: 16, fontWeight: '900', color: '#1E293B' },
+  doneBtn:     { backgroundColor: '#fff', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1.5, borderColor: '#E2E8F0' },
+  doneBtnText: { color: colors.primary, fontWeight: '800', fontSize: 14 },
 
   viewToggle: {
-    flexDirection: 'row', gap: 6, padding: 6, margin: 12, marginBottom: 0,
-    backgroundColor: '#E4F2EA', borderRadius: 14,
+    flexDirection: 'row', gap: 4, padding: 4, margin: 12, marginBottom: 0,
+    backgroundColor: '#F1F5F9', borderRadius: 12,
   },
-  toggleBtn:   { flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
-  toggleBtnOn: { backgroundColor: colors.primary },
-  toggleText:   { fontSize: 13, fontWeight: '800', color: '#7A9C8A' },
-  toggleTextOn: { color: '#fff' },
+  toggleBtn:   { flex: 1, paddingVertical: 9, borderRadius: 9, alignItems: 'center' },
+  toggleBtnOn: { backgroundColor: '#fff', shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  toggleText:   { fontSize: 13, fontWeight: '800', color: '#94A3B8' },
+  toggleTextOn: { color: '#1E293B' },
 
   // 주간 그리드
   gridRow: { flexDirection: 'row' },
@@ -623,14 +623,13 @@ const styles = StyleSheet.create({
   cardEdit:  { fontSize: 13, color: '#94A3B8', fontWeight: '700' },
 
   addBtnWrap: {
-    padding: 16, backgroundColor: colors.white,
-    borderTopWidth: 1, borderTopColor: colors.border,
+    padding: 14, backgroundColor: '#fff',
+    borderTopWidth: 1, borderTopColor: '#EEF1F5',
   },
   addBtn: {
-    backgroundColor: colors.primary, borderRadius: 16, paddingVertical: 16, alignItems: 'center',
-    elevation: 4, shadowColor: colors.primary, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 3 },
+    backgroundColor: '#fff', borderRadius: 12, paddingVertical: 15, alignItems: 'center', borderWidth: 1.5, borderColor: '#E2E8F0',
   },
-  addBtnText: { color: '#fff', fontWeight: '800', fontSize: 16 },
+  addBtnText: { color: colors.primary, fontWeight: '800', fontSize: 15, letterSpacing: 0.2 },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
   modalSheet: {

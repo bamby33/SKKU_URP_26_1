@@ -1,6 +1,6 @@
 /**
  * 온보딩 3 · 보호자 전용
- * 기본 시간 설정 → AI 맞춤 시간표 생성
+ * 기본 시간 설정 → 입력값으로 시간표 직접 생성 (AI 미사용)
  */
 import React, { useState } from 'react';
 import {
@@ -12,7 +12,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
 import { RootStackParamList, ScheduleParam } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
-import { api } from '../../api/client';
+import TimePickerField from '../../components/TimePickerField';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'BasicSchedule'>;
@@ -109,10 +109,17 @@ function TimeField({ value, onChange, label, emoji }: TimePickerProps) {
 }
 
 // ── 타입 ────────────────────────────────────────────────────────────────────────
-type FixedItem = { name: string; time: string; days: number[] };
+type FixedItem = { name: string; time: string; endTime: string; days: number[] };
 
 const DAY_LABELS = ['월', '화', '수', '목', '금', '토', '일'];
 const FIXED_SUGGESTIONS = ['복지관', '학교/기관', '병원', '치료', '운동'];
+
+// 시간표 직접 생성용 (AI 없이) — 그리드 06:00~24:00, 30분 슬롯
+const GRID_START_H = 6;
+const GRID_TOTAL = 36;
+const toMinB = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+const toSlotB = (t: string) => Math.max(0, Math.min(GRID_TOTAL, Math.round((toMinB(t) - GRID_START_H * 60) / 30)));
+const minToTimeB = (mins: number) => { const c = Math.max(0, Math.min(23 * 60 + 59, mins)); return `${String(Math.floor(c / 60)).padStart(2, '0')}:${String(c % 60).padStart(2, '0')}`; };
 
 // ── 메인 컴포넌트 ──────────────────────────────────────────────────────────────
 export default function BasicScheduleScreen({ navigation, route }: Props) {
@@ -123,16 +130,21 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
   const [breakfastTime,  setBreakfastTime]  = useState('08:00');
   const [lunchTime,      setLunchTime]      = useState('12:00');
   const [dinnerTime,     setDinnerTime]     = useState('18:00');
-  const [washTimes,      setWashTimes]      = useState<string[]>(['08:00', '20:00']);
-  const [addingWash,     setAddingWash]     = useState(false);
-  const [washPickerVal,  setWashPickerVal]  = useState('21:00');
-  const [loading,        setLoading]        = useState(false);
+  // 세면(세수·양치 — 순간 일과) / 씻기(샤워·목욕 — 지속 일과) 분리
+  const [faceTimes,      setFaceTimes]      = useState<string[]>(['08:00']);
+  const [addingFace,     setAddingFace]     = useState(false);
+  const [facePickerVal,  setFacePickerVal]  = useState('08:00');
+  const [bathTimes,      setBathTimes]      = useState<string[]>(['20:00']);
+  const [addingBath,     setAddingBath]     = useState(false);
+  const [bathPickerVal,  setBathPickerVal]  = useState('20:00');
 
-  const addWashTime = () => {
-    if (!washTimes.includes(washPickerVal)) {
-      setWashTimes(p => [...p, washPickerVal].sort());
-    }
-    setAddingWash(false);
+  const addFaceTime = () => {
+    if (!faceTimes.includes(facePickerVal)) setFaceTimes(p => [...p, facePickerVal].sort());
+    setAddingFace(false);
+  };
+  const addBathTime = () => {
+    if (!bathTimes.includes(bathPickerVal)) setBathTimes(p => [...p, bathPickerVal].sort());
+    setAddingBath(false);
   };
 
   // 고정 일과
@@ -140,13 +152,16 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
   const [addingFixed,    setAddingFixed]    = useState(false);
   const [fixedName,      setFixedName]      = useState('');
   const [fixedTime,      setFixedTime]      = useState('09:00');
+  const [fixedEndTime,   setFixedEndTime]   = useState('10:00');
   const [fixedDays,      setFixedDays]      = useState<number[]>([]); // 빈 배열 = 매일
 
   const addFixedItem = () => {
     if (!fixedName.trim()) return;
-    setFixedItems(prev => [...prev, { name: fixedName.trim(), time: fixedTime, days: fixedDays }]);
+    if (toMinB(fixedEndTime) <= toMinB(fixedTime)) { Alert.alert('시간 오류', '끝나는 시간이 시작 시간보다 늦어야 해요.'); return; }
+    setFixedItems(prev => [...prev, { name: fixedName.trim(), time: fixedTime, endTime: fixedEndTime, days: fixedDays }]);
     setFixedName('');
     setFixedTime('09:00');
+    setFixedEndTime('10:00');
     setFixedDays([]);
     setAddingFixed(false);
   };
@@ -155,46 +170,31 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
     setFixedDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort());
   };
 
-  const handleGenerate = async () => {
-    setLoading(true);
-    try {
-      const res = await api.post('/ai/suggest-schedule-onboarding', {
-        name:             params.userName,
-        age:              params.age,
-        disability_type:  params.disabilityType,
-        disability_level: params.disabilityLevel,
-        occupation:       params.occupation,
-        likes:            params.likes,
-        dislikes:         params.dislikes,
-        daily_life:       params.dailyLife,
-        problem_notes:    params.problemNotes,
-        wake_time:        wakeTime,
-        sleep_time:       sleepTime,
-        breakfast_time:   breakfastTime,
-        lunch_time:       lunchTime,
-        dinner_time:      dinnerTime,
-        wash_times:       washTimes,
-        fixed_schedules:  fixedItems,
-      });
-
-      const schedules: ScheduleParam[] = (res.data.blocks as any[]).map(b => ({
-        day:       b.day,
-        startSlot: b.startSlot,
-        endSlot:   b.endSlot,
-        startTime: b.scheduled_time ?? undefined,
-        endTime:   b.end_time ?? undefined,
-        activity:  b.name,
-        emoji:     b.emoji,
-        color:     b.color,
-      }));
-
-      navigation.navigate('ScheduleSetup', { ...params, schedules });
-    } catch (e: any) {
-      const msg = e?.response?.data?.detail ?? 'AI 시간표 생성 중 오류가 발생했어요.';
-      Alert.alert('오류', msg);
-    } finally {
-      setLoading(false);
+  // AI 없이 — 입력한 기본 일과 + 고정 일과로 시간표를 그대로 생성 (나머지는 다음 편집 화면에서 추가)
+  const handleGenerate = () => {
+    const ALL = [0, 1, 2, 3, 4, 5, 6];
+    const out: ScheduleParam[] = [];
+    const push = (day: number, time: string, endTime: string, name: string, emoji: string) => {
+      out.push({ day, startSlot: toSlotB(time), endSlot: toSlotB(endTime), startTime: time, endTime, activity: name, emoji, color: '' });
+    };
+    // 매일 일과 (요일별 1개씩)
+    const dur = (t: string) => minToTimeB(toMinB(t) + 30);          // 식사·씻기 30분
+    for (const day of ALL) {
+      push(day, wakeTime,      minToTimeB(toMinB(wakeTime) + 30),      '기상',      '🌅'); // 순간(끝은 명목)
+      push(day, breakfastTime, dur(breakfastTime),                    '아침 식사', '🍚');
+      push(day, lunchTime,     dur(lunchTime),                        '점심 식사', '🍱');
+      push(day, dinnerTime,    dur(dinnerTime),                       '저녁 식사', '🍽️');
+      push(day, sleepTime,     '23:59',                               '취침',      '😴'); // 취침=기상까지(명목 23:59)
+      faceTimes.forEach(t => push(day, t, minToTimeB(toMinB(t) + 30), '세면',      '🧼')); // 순간
+      bathTimes.forEach(t => push(day, t, dur(t),                     '씻기',      '🛁')); // 지속
     }
+    // 고정 일과 (요일별 — days 비면 매일). 끝 시간은 입력값 사용
+    for (const f of fixedItems) {
+      const days = f.days.length ? f.days : ALL;
+      const endTime = f.endTime && toMinB(f.endTime) > toMinB(f.time) ? f.endTime : minToTimeB(toMinB(f.time) + 60);
+      for (const day of days) push(day, f.time, endTime, f.name, '📍');
+    }
+    navigation.navigate('ScheduleSetup', { ...params, schedules: out });
   };
 
   const handleSkip = () => {
@@ -221,52 +221,92 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
 
         {/* 타이틀 */}
         <View style={styles.titleArea}>
-          <Text style={styles.title}>기본 시간을{'\n'}설정해주세요</Text>
-          <Text style={styles.subtitle}>AI가 맞춤 시간표를 만들어드려요</Text>
+          <Text style={styles.title}>기본 시간을 설정해주세요</Text>
+          <Text style={styles.subtitle}>입력한 시간으로 시간표를 만들어요</Text>
         </View>
 
         {/* 기본 루틴 섹션 */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>하루 기본 루틴</Text>
-          <TimeField value={wakeTime}      onChange={setWakeTime}      label="기상 시간"  emoji="🌅" />
-          <TimeField value={breakfastTime} onChange={setBreakfastTime} label="아침 식사"  emoji="🍳" />
-          <TimeField value={lunchTime}     onChange={setLunchTime}     label="점심 식사"  emoji="🍱" />
-          <TimeField value={dinnerTime}    onChange={setDinnerTime}    label="저녁 식사"  emoji="🍽️" />
-          <TimeField value={sleepTime}     onChange={setSleepTime}     label="취침 시간"  emoji="🌙" />
+          {([
+            ['🌅', '기상',      wakeTime,      setWakeTime],
+            ['🍳', '아침 식사', breakfastTime, setBreakfastTime],
+            ['🍱', '점심 식사', lunchTime,     setLunchTime],
+            ['🍽️', '저녁 식사', dinnerTime,    setDinnerTime],
+            ['🌙', '취침',      sleepTime,     setSleepTime],
+          ] as [string, string, string, (v: string) => void][]).map(([em, lb, val, set]) => (
+            <View key={lb} style={styles.timeRow}>
+              <Text style={styles.timeRowLabel}>{em}  {lb}</Text>
+              <View style={styles.timeRowPicker}><TimePickerField value={val} onChange={set} /></View>
+            </View>
+          ))}
         </View>
 
-        {/* 씻기·세면 섹션 (여러 번 가능) */}
+        {/* 세면 섹션 (세수·양치 — 여러 번 가능) */}
         <View style={styles.section}>
           <View style={styles.medHeader}>
-            <Text style={styles.sectionTitle}>씻기·세면 시간</Text>
+            <Text style={styles.sectionTitle}>세면 시간 (세수·양치)</Text>
             <Text style={styles.medOptional}>여러 번 가능</Text>
           </View>
-
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-            {washTimes.map((t, i) => (
+            {faceTimes.map((t, i) => (
               <View key={i} style={styles.washChip}>
                 <Text style={styles.washChipText}>{t}</Text>
-                <TouchableOpacity onPress={() => setWashTimes(p => p.filter((_, j) => j !== i))}>
+                <TouchableOpacity onPress={() => setFaceTimes(p => p.filter((_, j) => j !== i))}>
                   <Text style={styles.medChipDel}>✕</Text>
                 </TouchableOpacity>
               </View>
             ))}
           </View>
-
-          {addingWash ? (
+          {addingFace ? (
             <View style={styles.medAddRow}>
-              <TimeField value={washPickerVal} onChange={setWashPickerVal} label="씻기 시간" emoji="🛁" />
+              <View style={{ flex: 1 }}><TimePickerField value={facePickerVal} onChange={setFacePickerVal} /></View>
               <View style={styles.medAddBtns}>
-                <TouchableOpacity style={styles.medCancelBtn} onPress={() => setAddingWash(false)}>
+                <TouchableOpacity style={styles.medCancelBtn} onPress={() => setAddingFace(false)}>
                   <Text style={styles.medCancelText}>취소</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.medConfirmBtn, { backgroundColor: colors.primary }]} onPress={addWashTime}>
+                <TouchableOpacity style={[styles.medConfirmBtn, { backgroundColor: colors.primary }]} onPress={addFaceTime}>
                   <Text style={styles.medConfirmText}>추가</Text>
                 </TouchableOpacity>
               </View>
             </View>
           ) : (
-            <TouchableOpacity style={styles.medAddBtn} onPress={() => setAddingWash(true)}>
+            <TouchableOpacity style={styles.medAddBtn} onPress={() => setAddingFace(true)}>
+              <Text style={styles.medAddBtnText}>+ 세면 시간 추가</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* 씻기 섹션 (샤워·목욕 — 여러 번 가능) */}
+        <View style={styles.section}>
+          <View style={styles.medHeader}>
+            <Text style={styles.sectionTitle}>씻기 시간 (샤워·목욕)</Text>
+            <Text style={styles.medOptional}>여러 번 가능</Text>
+          </View>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {bathTimes.map((t, i) => (
+              <View key={i} style={styles.washChip}>
+                <Text style={styles.washChipText}>{t}</Text>
+                <TouchableOpacity onPress={() => setBathTimes(p => p.filter((_, j) => j !== i))}>
+                  <Text style={styles.medChipDel}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
+          {addingBath ? (
+            <View style={styles.medAddRow}>
+              <View style={{ flex: 1 }}><TimePickerField value={bathPickerVal} onChange={setBathPickerVal} /></View>
+              <View style={styles.medAddBtns}>
+                <TouchableOpacity style={styles.medCancelBtn} onPress={() => setAddingBath(false)}>
+                  <Text style={styles.medCancelText}>취소</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.medConfirmBtn, { backgroundColor: colors.primary }]} onPress={addBathTime}>
+                  <Text style={styles.medConfirmText}>추가</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <TouchableOpacity style={styles.medAddBtn} onPress={() => setAddingBath(true)}>
               <Text style={styles.medAddBtnText}>+ 씻기 시간 추가</Text>
             </TouchableOpacity>
           )}
@@ -279,7 +319,7 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
             <Text style={styles.medOptional}>매일 반드시 있는 것</Text>
           </View>
           <Text style={styles.fixedHint}>
-            복지관·학교·병원처럼 절대 빠지면 안 되는 일과를 추가하세요.{'\n'}AI가 스케줄을 조정할 때 이 항목은 건드리지 않아요.
+            복지관·학교·병원처럼 절대 빠지면 안 되는 일과를 추가하세요.
           </Text>
 
           {fixedItems.map((item, i) => (
@@ -287,7 +327,7 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
               <View style={{ flex: 1 }}>
                 <Text style={styles.fixedChipName}>{item.name}</Text>
                 <Text style={styles.fixedChipSub}>
-                  {item.time} · {item.days.length === 0 ? '매일' : item.days.map(d => DAY_LABELS[d]).join('/')}
+                  {item.time}~{item.endTime} · {item.days.length === 0 ? '매일' : item.days.map(d => DAY_LABELS[d]).join('/')}
                 </Text>
               </View>
               <TouchableOpacity onPress={() => setFixedItems(prev => prev.filter((_, j) => j !== i))}>
@@ -322,8 +362,12 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
                 onChangeText={setFixedName}
               />
 
-              {/* 시간 선택 */}
-              <TimeField value={fixedTime} onChange={setFixedTime} label="시작 시간" emoji="🕐" />
+              {/* 시간 선택 (시작 ~ 끝) */}
+              <View style={styles.fixedTimeRow}>
+                <View style={{ flex: 1 }}><TimePickerField value={fixedTime} onChange={(v) => { setFixedTime(v); if (toMinB(v) >= toMinB(fixedEndTime)) setFixedEndTime(minToTimeB(toMinB(v) + 60)); }} /></View>
+                <Text style={styles.fixedTimeSep}>~</Text>
+                <View style={{ flex: 1 }}><TimePickerField value={fixedEndTime} onChange={setFixedEndTime} /></View>
+              </View>
 
               {/* 요일 선택 */}
               <Text style={styles.fixedDayLabel}>요일 선택 (미선택 = 매일)</Text>
@@ -359,25 +403,17 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
           )}
         </View>
 
-        {/* AI 생성 버튼 */}
+        {/* 다음 — 입력한 시간으로 시간표 만들기 */}
         <TouchableOpacity
-          style={[styles.generateBtn, loading && styles.generateBtnLoading]}
+          style={styles.generateBtn}
           onPress={handleGenerate}
-          disabled={loading}
           activeOpacity={0.85}
         >
-          {loading ? (
-            <View style={styles.loadingRow}>
-              <ActivityIndicator color="#fff" size="small" />
-              <Text style={styles.generateBtnText}>AI가 시간표를 만들고 있어요...</Text>
-            </View>
-          ) : (
-            <Text style={styles.generateBtnText}>AI 맞춤 시간표 생성하기</Text>
-          )}
+          <Text style={styles.generateBtnText}>이 시간으로 시간표 만들기</Text>
         </TouchableOpacity>
 
         <TouchableOpacity onPress={handleSkip} style={styles.skipBtn}>
-          <Text style={styles.skipText}>건너뛰고 직접 설정할게요</Text>
+          <Text style={styles.skipText}>비우고 직접 만들게요</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -403,16 +439,21 @@ const styles = StyleSheet.create({
   stepLine:      { width: 20, height: 2, backgroundColor: '#d0daf0' },
   stepLineDone:  { backgroundColor: colors.primaryLight },
 
-  titleArea: { alignItems: 'center', gap: 8, paddingVertical: 4 },
+  titleArea: { alignItems: 'flex-start', gap: 6, paddingVertical: 4, paddingHorizontal: 2 },
   emoji:     { fontSize: 52 },
-  title:     { fontSize: 24, fontWeight: '900', color: colors.primary, textAlign: 'center', lineHeight: 32 },
-  subtitle:  { fontSize: 13, color: '#888' },
+  title:     { fontSize: 22, fontWeight: '900', color: '#1E293B', lineHeight: 30 },
+  subtitle:  { fontSize: 13, color: '#94A3B8' },
 
   section: {
-    backgroundColor: colors.white, borderRadius: 18, padding: 16, gap: 10,
-    elevation: 2, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, shadowOffset: { width: 0, height: 2 },
+    backgroundColor: '#fff', borderRadius: 16, padding: 16, gap: 10,
+    borderWidth: 1, borderColor: '#EEF1F5',
   },
-  sectionTitle: { fontSize: 15, fontWeight: '800', color: colors.primary, marginBottom: 4 },
+  sectionTitle: { fontSize: 15, fontWeight: '800', color: '#1E293B', marginBottom: 6 },
+
+  // 하루 기본 루틴 행 (라벨 + 모던 피커)
+  timeRow:       { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  timeRowLabel:  { flex: 1, fontSize: 15, fontWeight: '700', color: '#334155' },
+  timeRowPicker: { width: 132 },
 
   // TimeField
   timeField: {
@@ -480,67 +521,68 @@ const styles = StyleSheet.create({
   medChipDel:  { fontSize: 16, color: '#bbb' },
   washChip: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: '#E8F5FA', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10,
-    borderWidth: 1.5, borderColor: '#A9D9E6',
+    backgroundColor: '#F1F5F9', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 9,
+    borderWidth: 1, borderColor: '#E2E8F0',
   },
-  washChipText: { fontSize: 14, fontWeight: '700', color: '#2A7A8C' },
-  medAddRow:   { gap: 8 },
+  washChipText: { fontSize: 14, fontWeight: '700', color: '#334155' },
+  medAddRow:   { gap: 10, flexDirection: 'row', alignItems: 'center' },
   medAddBtns:  { flexDirection: 'row', gap: 8 },
-  medCancelBtn:{ flex: 1, paddingVertical: 11, borderRadius: 12, backgroundColor: '#eee', alignItems: 'center' },
-  medCancelText:{ fontSize: 14, fontWeight: '700', color: '#888' },
-  medConfirmBtn:{ flex: 2, paddingVertical: 11, borderRadius: 12, backgroundColor: colors.alertLight, alignItems: 'center' },
+  medCancelBtn:{ paddingVertical: 11, paddingHorizontal: 16, borderRadius: 10, backgroundColor: '#F1F5F9', alignItems: 'center' },
+  medCancelText:{ fontSize: 14, fontWeight: '700', color: '#64748B' },
+  medConfirmBtn:{ paddingVertical: 11, paddingHorizontal: 18, borderRadius: 10, backgroundColor: colors.primary, alignItems: 'center' },
   medConfirmText:{ fontSize: 14, fontWeight: '800', color: '#fff' },
   medAddBtn: {
-    paddingVertical: 12, borderRadius: 12,
-    borderWidth: 2, borderColor: colors.border, borderStyle: 'dashed', alignItems: 'center',
+    paddingVertical: 12, borderRadius: 10,
+    borderWidth: 1.5, borderColor: '#E2E8F0', borderStyle: 'dashed', alignItems: 'center',
   },
-  medAddBtnText: { fontSize: 14, fontWeight: '700', color: '#aaa' },
+  medAddBtnText: { fontSize: 14, fontWeight: '700', color: '#94A3B8' },
 
   // 고정 일과
-  fixedHint: { fontSize: 12, color: '#888', lineHeight: 18 },
+  fixedHint: { fontSize: 12, color: '#94A3B8', lineHeight: 18 },
   fixedChip: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
-    backgroundColor: '#F0F4FF', borderRadius: 12,
+    backgroundColor: '#F1F5F9', borderRadius: 10,
     paddingHorizontal: 14, paddingVertical: 10,
-    borderWidth: 1.5, borderColor: '#C7D2F5',
+    borderWidth: 1, borderColor: '#E2E8F0',
   },
   fixedChipIcon: { fontSize: 16 },
-  fixedChipName: { fontSize: 14, fontWeight: '700', color: colors.primary },
-  fixedChipSub:  { fontSize: 12, color: '#888', marginTop: 2 },
+  fixedChipName: { fontSize: 14, fontWeight: '700', color: '#1E293B' },
+  fixedChipSub:  { fontSize: 12, color: '#64748B', marginTop: 2 },
+  fixedTimeRow:  { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  fixedTimeSep:  { fontSize: 14, color: '#94A3B8', fontWeight: '700' },
   fixedAddBox: { gap: 10 },
   fixedNameInput: {
-    backgroundColor: '#F4FAF7', borderRadius: 12,
-    borderWidth: 1.5, borderColor: colors.border,
-    paddingHorizontal: 14, paddingVertical: 10,
-    fontSize: 14, color: colors.text,
+    backgroundColor: '#F8FAFC', borderRadius: 10,
+    borderWidth: 1, borderColor: '#E2E8F0',
+    paddingHorizontal: 14, paddingVertical: 11,
+    fontSize: 14, color: '#1E293B',
   },
-  fixedDayLabel: { fontSize: 12, fontWeight: '700', color: '#888' },
+  fixedDayLabel: { fontSize: 12, fontWeight: '700', color: '#64748B' },
   fixedDayRow: { flexDirection: 'row', gap: 6 },
   dayBtn: {
     width: 36, height: 36, borderRadius: 18,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#F4FAF7', borderWidth: 1.5, borderColor: colors.border,
+    backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0',
   },
   dayBtnOn: { backgroundColor: colors.primary, borderColor: colors.primary },
-  dayBtnText: { fontSize: 12, fontWeight: '700', color: colors.primary },
+  dayBtnText: { fontSize: 12, fontWeight: '700', color: '#64748B' },
   dayBtnTextOn: { color: '#fff' },
   fixedSugChip: {
     paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16,
-    backgroundColor: '#F4FAF7', borderWidth: 1.5, borderColor: colors.border,
+    backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0',
   },
   fixedSugChipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
-  fixedSugText: { fontSize: 12, fontWeight: '600', color: colors.primary },
+  fixedSugText: { fontSize: 12, fontWeight: '600', color: '#64748B' },
   fixedSugTextOn: { color: '#fff' },
 
   // Bottom buttons
   generateBtn: {
-    backgroundColor: colors.primary, borderRadius: 16, paddingVertical: 16, alignItems: 'center',
-    elevation: 4, shadowColor: colors.primary, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 3 },
+    backgroundColor: '#fff', borderRadius: 14, paddingVertical: 16, alignItems: 'center', marginTop: 4, borderWidth: 1.5, borderColor: '#E2E8F0',
   },
-  generateBtnLoading: { backgroundColor: colors.primaryLight },
-  generateBtnText:    { color: '#fff', fontWeight: '800', fontSize: 16 },
+  generateBtnLoading: { backgroundColor: '#F8FAFC' },
+  generateBtnText:    { color: colors.primary, fontWeight: '800', fontSize: 16 },
   loadingRow:         { flexDirection: 'row', alignItems: 'center', gap: 10 },
 
-  skipBtn:  { alignItems: 'center', paddingVertical: 8 },
-  skipText: { fontSize: 13, color: '#aaa', fontWeight: '600' },
+  skipBtn:  { alignItems: 'center', paddingVertical: 10 },
+  skipText: { fontSize: 13, color: '#94A3B8', fontWeight: '600' },
 });

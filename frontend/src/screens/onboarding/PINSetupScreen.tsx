@@ -156,7 +156,7 @@ const styles = StyleSheet.create({
 
   content: { flex: 1, alignItems: 'center', paddingHorizontal: 32, paddingTop: 20, gap: 20 },
   emoji: { fontSize: 64 },
-  title: { fontSize: 26, fontWeight: '900', color: colors.primary, textAlign: 'center', lineHeight: 36 },
+  title: { fontSize: 26, fontWeight: '900', color: '#1E293B', lineHeight: 36 },
   subtitle: { fontSize: 13, color: '#888', textAlign: 'center' },
 
   dotRow: { flexDirection: 'row', gap: 20, marginVertical: 8 },

@@ -92,7 +92,7 @@ export default function PreferencesScreen({ navigation, route }: Props) {
 
           {/* 타이틀 */}
           <View style={styles.titleArea}>
-            <Text style={styles.title}>{userName}의{'\n'}특성을 알려주세요</Text>
+            <Text style={styles.title}>{userName}의 특성을 알려주세요</Text>
             <Text style={styles.subtitle}>AI가 더 잘 도와줄 수 있어요</Text>
           </View>
 
@@ -291,11 +291,11 @@ const styles = StyleSheet.create({
 
   content: { padding: 24, gap: 20 },
 
-  titleArea: { alignItems: 'center', gap: 8 },
+  titleArea: { alignItems: 'flex-start', gap: 8 },
   emoji: { fontSize: 48 },
   title: {
-    fontSize: 22, fontWeight: '900', color: colors.primary,
-    textAlign: 'center', lineHeight: 30,
+    fontSize: 22, fontWeight: '900', color: '#1E293B',
+    lineHeight: 30,
   },
   subtitle: { fontSize: 13, color: '#888' },
 
@@ -312,7 +312,7 @@ const styles = StyleSheet.create({
   },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   sectionEmoji: { fontSize: 22 },
-  sectionTitle: { fontSize: 15, fontWeight: '800', color: colors.primary },
+  sectionTitle: { fontSize: 15, fontWeight: '800', color: '#1E293B' },
 
   colorRow: { flexDirection: 'row', gap: 12, flexWrap: 'wrap' },
   colorSwatch: {
@@ -329,80 +329,79 @@ const styles = StyleSheet.create({
 
   suggestions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   suggestionChip: {
-    backgroundColor: colors.primaryBg,
+    backgroundColor: '#F1F5F9',
     borderRadius: 20,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderWidth: 1.5,
-    borderColor: colors.border,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   dislikeChip: {
-    backgroundColor: '#fff0f0',
-    borderColor: '#f5c0c0',
+    backgroundColor: '#F1F5F9',
+    borderColor: '#E2E8F0',
   },
-  chipSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
-  dislikeChipSelected: { backgroundColor: colors.alertLight, borderColor: colors.alertLight },
-  chipText: { fontSize: 12, fontWeight: '600', color: colors.primary },
-  chipTextSelected: { color: colors.white },
-  dislikeChipTextSelected: { color: colors.white },
+  chipSelected: { backgroundColor: '#334155', borderColor: '#334155' },
+  dislikeChipSelected: { backgroundColor: '#334155', borderColor: '#334155' },
+  chipText: { fontSize: 12, fontWeight: '600', color: '#475569' },
+  chipTextSelected: { color: '#fff' },
+  dislikeChipTextSelected: { color: '#fff' },
 
   inputRow: { flexDirection: 'row', gap: 8 },
   tagInput: {
     flex: 1,
-    backgroundColor: '#F4FAF7',
+    backgroundColor: '#F8FAFC',
     borderRadius: 12,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 11,
     fontSize: 14,
-    color: colors.text,
-    borderWidth: 1.5,
-    borderColor: colors.border,
+    color: '#1E293B',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   addBtn: {
     width: 44,
     height: 44,
     borderRadius: 12,
-    backgroundColor: colors.primary,
+    backgroundColor: '#fff',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  addBtnAlert: { backgroundColor: colors.alertLight },
-  addBtnText: { color: colors.white, fontSize: 22, fontWeight: '700', lineHeight: 26 },
+  addBtnAlert: { backgroundColor: '#fff', borderColor: '#E2E8F0' },
+  addBtnText: { color: colors.primary, fontSize: 22, fontWeight: '700', lineHeight: 26 },
 
   tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   tagChip: {
-    backgroundColor: colors.primary,
+    backgroundColor: '#334155',
     borderRadius: 16,
     paddingHorizontal: 12,
     paddingVertical: 5,
   },
-  tagChipAlert: { backgroundColor: colors.alertLight },
+  tagChipAlert: { backgroundColor: '#334155' },
   tagChipText: { color: colors.white, fontSize: 12, fontWeight: '600' },
   tagChipTextAlert: { color: colors.white },
 
   notesHint: { fontSize: 12, color: '#888', lineHeight: 18 },
   notesInput: {
-    backgroundColor: '#F4FAF7',
+    backgroundColor: '#F8FAFC',
     borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: colors.border,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
     padding: 14,
     fontSize: 14,
-    color: colors.text,
+    color: '#1E293B',
     minHeight: 100,
   },
 
   nextBtn: {
-    backgroundColor: colors.primary,
-    borderRadius: 16,
+    backgroundColor: '#fff',
+    borderRadius: 14,
     paddingVertical: 16,
     alignItems: 'center',
-    elevation: 4,
-    shadowColor: colors.primary,
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 3 },
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
   },
-  nextBtnText: { color: colors.white, fontWeight: '800', fontSize: 16 },
+  nextBtnText: { color: colors.primary, fontWeight: '800', fontSize: 16 },
   skipHint: { textAlign: 'center', fontSize: 11, color: '#bbb' },
 });

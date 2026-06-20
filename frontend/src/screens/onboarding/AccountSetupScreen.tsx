@@ -86,7 +86,7 @@ export default function AccountSetupScreen({ navigation, route }: Props) {
           </View>
 
           <View style={styles.titleArea}>
-            <Text style={styles.title}>보호자 정보를{'\n'}입력해주세요</Text>
+            <Text style={styles.title}>보호자 정보를 입력해주세요</Text>
             <Text style={styles.subtitle}>로그인에 사용됩니다</Text>
           </View>
 
@@ -213,14 +213,14 @@ const styles = StyleSheet.create({
   stepLineDone: { backgroundColor: colors.primaryLight },
 
   content: { padding: 24, gap: 20 },
-  titleArea: { gap: 8, paddingVertical: 4 },
-  title: { fontSize: 24, fontWeight: '900', color: colors.primary, lineHeight: 32 },
+  titleArea: { alignItems: 'flex-start', gap: 8, paddingVertical: 4 },
+  title: { fontSize: 24, fontWeight: '900', color: '#1E293B', lineHeight: 32 },
   subtitle: { fontSize: 13, color: '#888' },
 
   divider: { height: 1, backgroundColor: '#e8eef8', marginVertical: 4 },
 
   fieldGroup: { gap: 8 },
-  fieldLabel: { fontSize: 13, fontWeight: '700', color: colors.primary },
+  fieldLabel: { fontSize: 13, fontWeight: '700', color: '#334155' },
   input: {
     backgroundColor: colors.white, borderRadius: 14,
     paddingHorizontal: 16, paddingVertical: 14,
@@ -234,11 +234,9 @@ const styles = StyleSheet.create({
   successText: { fontSize: 12, color: colors.success },
 
   nextBtn: {
-    backgroundColor: colors.guardian, borderRadius: 16, paddingVertical: 16,
-    alignItems: 'center', marginTop: 8, elevation: 4,
-    shadowColor: colors.guardian, shadowOpacity: 0.3, shadowRadius: 10,
-    shadowOffset: { width: 0, height: 3 },
+    backgroundColor: '#fff', borderRadius: 16, paddingVertical: 16,
+    alignItems: 'center', marginTop: 8, borderWidth: 1.5, borderColor: '#E2E8F0',
   },
-  nextBtnDisabled: { backgroundColor: '#A8D8C0', elevation: 0, shadowOpacity: 0 },
-  nextBtnText: { color: colors.white, fontWeight: '800', fontSize: 16 },
+  nextBtnDisabled: { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0' },
+  nextBtnText: { color: colors.primary, fontWeight: '800', fontSize: 16 },
 });

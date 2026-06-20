@@ -358,7 +358,7 @@ export default function GuardianRecapScreen({ navigation }: Props) {
                     const newEnd = sg?.action.new_end_time;
                     const cut = (sg && newEnd && s.end) ? toMin(s.end) - toMin(newEnd) : 0;
                     const bedtime = isBedtime(s.title);
-                    const instant = /기상|일어나|복용|투약|출근|등교|등원|퇴근|하교|하원|세면|양치|씻/.test(s.title || '');
+                    const instant = /기상|일어나|복용|투약|출근|등교|등원|퇴근|하교|하원|세면|양치/.test(s.title || '');
                     const validEnd = s.end && toMin(s.end) > toMin(s.time) && !instant;   // 순간 일과·깨진 종료시각은 범위 숨김
                     const willReduce = reduceIds.has(s.id);
                     const willRest = restIds.has(s.id);

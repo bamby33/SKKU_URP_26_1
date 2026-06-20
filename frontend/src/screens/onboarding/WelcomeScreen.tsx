@@ -188,7 +188,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(6,95,70,0.1)',
     borderRadius: 20,
   },
-  backText: { fontSize: 15, color: colors.guardian, fontWeight: '800' },
+  backText: { fontSize: 15, color: colors.primary, fontWeight: '800' },
   robotArea: { alignItems: 'center', flex: 1, justifyContent: 'center' },
   robotEmoji: { fontSize: 100, lineHeight: 110 },
 
@@ -206,10 +206,8 @@ const styles = StyleSheet.create({
 
   btnWrap: { marginTop: 8 },
   startBtn: {
-    backgroundColor: colors.guardian, borderRadius: 18, paddingVertical: 18,
-    alignItems: 'center', elevation: 6,
-    shadowColor: colors.guardian, shadowOpacity: 0.35,
-    shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
+    backgroundColor: '#fff', borderRadius: 18, paddingVertical: 18,
+    alignItems: 'center', borderWidth: 1.5, borderColor: '#E2E8F0',
   },
-  startBtnText: { color: colors.white, fontWeight: '800', fontSize: 17 },
+  startBtnText: { color: colors.primary, fontWeight: '800', fontSize: 17 },
 });

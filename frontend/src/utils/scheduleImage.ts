@@ -35,8 +35,8 @@ const RULES: { kw: string[]; img: ImageSourcePropType; color: string }[] = [
   { kw: ['점심'], img: IMG.lunch, color: '#66BB6A' },
   { kw: ['저녁'], img: IMG.dinner, color: '#4DB6AC' },
   { kw: ['식사', '밥', '먹기', '간식'], img: IMG.lunch, color: '#4CAF7D' },  // 일반 '식사'
-  { kw: ['목욕', '샤워'], img: IMG.bath, color: '#FFB74D' },
-  { kw: ['세면', '양치', '씻', '수면준비', '잠잘준비'], img: IMG.wash, color: '#4FC3F7' },
+  { kw: ['목욕', '샤워', '씻'], img: IMG.bath, color: '#FFB74D' },          // 씻기(샤워·목욕) — 지속 일과
+  { kw: ['세면', '양치', '수면준비', '잠잘준비'], img: IMG.wash, color: '#4FC3F7' },  // 세면(세수) — 순간 일과
   { kw: ['낮잠'], img: IMG.nap, color: '#9FA8DA' },                          // 낮잠 — 취침보다 먼저 (별도 색)
   { kw: ['휴식', '쉬기', '쉬는', '쉼'], img: IMG.rest, color: '#80CBC4' },    // 휴식
   { kw: ['취침', '수면', '잠자', '잠들', '자기'], img: IMG.sleep, color: '#AB77E8' },  // 밤 취침

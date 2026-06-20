@@ -98,7 +98,7 @@ function schedulesToBlocks(schedules: ApiSchedule[]): Block[] {
     const { emoji, name } = parseTitle(s.title);
     // 취침은 이모지/저장색이 제각각이어도 항상 같은 색·다음날 기상까지로 통일 (데이터가 꼬여도 일관 표시)
     const bedtime = /취침|수면|자기|잠자기|잠자|잠들/.test(name) && !name.includes('낮잠');
-    const instant = /기상|일어나|복용|투약|출근|등교|등원|퇴근|하교|하원|세면|양치|씻/.test(name);
+    const instant = /기상|일어나|복용|투약|출근|등교|등원|퇴근|하교|하원|세면|양치/.test(name);
     const color = scheduleColor(s.title);   // 같은 일과는 항상 같은 색
     const startSlot = toSlot(s.scheduled_time);
     const endSlot = bedtime ? TOTAL : instant ? Math.min(startSlot + 1, TOTAL) : Math.min(startSlot + 2, TOTAL);

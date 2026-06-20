@@ -30,7 +30,7 @@ def classify_category(title: str) -> str:
 
 
 _INSTANT_KW = ["기상", "일어나", "복용", "투약", "출근", "등교", "등원",
-               "퇴근", "하교", "하원", "세면", "양치", "씻"]
+               "퇴근", "하교", "하원", "세면", "양치"]
 
 
 def is_instant(title: str) -> bool:
