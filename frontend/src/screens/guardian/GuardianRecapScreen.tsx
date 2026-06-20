@@ -5,11 +5,12 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Animated, Easing, Alert, Dimensions,
+  View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Animated, Easing, Alert, Dimensions, Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AppFrame from '../../components/AppFrame';
 import { SchedIcon } from '../../components/SchedIcon';
+import TimePickerField from '../../components/TimePickerField';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RootStackParamList } from '../../navigation/AppNavigator';
@@ -26,6 +27,8 @@ const fmt = (hhmm: string) => {
   return `${h < 12 ? '오전' : '오후'} ${h % 12 || 12}:${String(m).padStart(2, '0')}`;
 };
 const toMin = (hhmm: string) => { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; };
+// 밤 취침(낮잠 제외) — 끝을 '기상까지'로 표시
+const isBedtime = (t: string) => /취침|수면|자기|잠자기|잠자|잠들/.test(t || '') && !(t || '').includes('낮잠');
 const MOOD: Record<string, { emoji: string; label: string; msg: string }> = {
   good: { emoji: '😊', label: '좋았어요', msg: '오늘 기분 좋게 하루를 보냈어요 😊' },
   soso: { emoji: '😐', label: '그저 그래요', msg: '오늘은 그저 그런 하루였어요. 내일은 조금 더 가볍게 시작해봐요.' },
@@ -53,7 +56,22 @@ export default function GuardianRecapScreen({ navigation }: Props) {
   const [suggestions, setSuggestions] = useState<Sugg[]>([]);
   const [step, setStep] = useState(0);   // 보여줄 단계 수 (0=인사만)
   const [applied, setApplied] = useState(false);
+  const [decided, setDecided] = useState<Record<number, 'accepted' | 'rejected'>>({}); // 추천별 수락/거절
+  const [editIdx, setEditIdx] = useState<number | null>(null); // 수정 중인 추천 index
+  const [editEnd, setEditEnd] = useState('');        // shorten: 새 종료시각
+  const [editRestStart, setEditRestStart] = useState(''); // rest: 휴식 시작
+  const [editRestEnd, setEditRestEnd] = useState('');     // rest: 휴식 끝
   const scrollRef = useRef<ScrollView>(null);
+
+  // 적용 후 내일 미리보기를 갱신하기 위해 대시보드만 다시 불러옴 (suggestions는 유지)
+  const reloadTomorrow = async () => {
+    try {
+      const uid = await AsyncStorage.getItem('user_id');
+      if (!uid) return;
+      const d = await api.get(`/guardian/user/${uid}/dashboard`);
+      setData(d.data);
+    } catch {}
+  };
 
   useEffect(() => {
     (async () => {
@@ -76,24 +94,50 @@ export default function GuardianRecapScreen({ navigation }: Props) {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 120);
   };
 
-  const applyAll = async () => {
-    const shortens = suggestions.filter(s => s.type === 'shorten' && s.action.new_end_time);
-    const rests = suggestions.filter(s => s.type === 'rest' && s.applicable && s.action.rest_start);
+  // 추천 1건 적용 (override로 수정값 반영 가능). 성공 시 그 카드를 '수락'으로 표시.
+  const applyOne = async (i: number, ov?: { new_end_time?: string; rest_start?: string; rest_end?: string }) => {
+    const s = suggestions[i];
+    if (!s) return;
     try {
-      for (const s of shortens) {
-        await api.post('/ai/apply-shorten', { schedule_ids: s.schedule_ids, new_end_time: s.action.new_end_time });
-      }
-      for (const s of rests) {
+      if (s.type === 'shorten') {
+        await api.post('/ai/apply-shorten', { schedule_ids: s.schedule_ids, new_end_time: ov?.new_end_time ?? s.action.new_end_time });
+      } else if (s.type === 'rest') {
         await api.post('/ai/apply-rest', {
-          user_id: s.action.user_id, rest_start: s.action.rest_start,
-          rest_end: s.action.rest_end, days_of_week: s.action.days_of_week,
+          user_id: s.action.user_id, rest_start: ov?.rest_start ?? s.action.rest_start,
+          rest_end: ov?.rest_end ?? s.action.rest_end, days_of_week: s.action.days_of_week,
         });
+      } else if (s.type === 'reduce') {
+        await api.post('/ai/apply-reduce', { schedule_ids: s.schedule_ids });
       }
-      setApplied(true);
-      Alert.alert('적용 완료', '내일 스케줄에 반영했어요.');
+      setDecided(d => ({ ...d, [i]: 'accepted' }));
+      reloadTomorrow();   // 내일 미리보기 즉시 갱신
     } catch {
       Alert.alert('오류', '적용에 실패했어요.');
     }
+  };
+  const rejectOne = (i: number) => setDecided(d => ({ ...d, [i]: 'rejected' }));
+
+  // 수정 모달 열기 — 추천값을 기본으로 채워줌
+  const openEditSugg = (i: number) => {
+    const s = suggestions[i];
+    setEditEnd(s.action.new_end_time ?? '');
+    setEditRestStart(s.action.rest_start ?? '');
+    setEditRestEnd(s.action.rest_end ?? '');
+    setEditIdx(i);
+  };
+  const confirmEditSugg = async () => {
+    if (editIdx == null) return;
+    const i = editIdx; setEditIdx(null);
+    await applyOne(i, { new_end_time: editEnd, rest_start: editRestStart, rest_end: editRestEnd });
+  };
+
+  // 남은(미결정) 추천 모두 수락
+  const applyAll = async () => {
+    for (let i = 0; i < suggestions.length; i++) {
+      if (!decided[i]) await applyOne(i);
+    }
+    setApplied(true);
+    Alert.alert('적용 완료', '내일 스케줄에 반영했어요.');
   };
 
   if (loading) {
@@ -117,7 +161,8 @@ export default function GuardianRecapScreen({ navigation }: Props) {
   const catOf = (s: any): 'accepted' | 'refused' | 'gaveup' | null => {
     const acc = s.completed_full || 0;
     const give = s.early_stop || 0;
-    const ref = (s.missed || 0) + (s.refused_transitions || 0);
+    // 거절 = 실시간 거부(refused_logs) + 전환 거절. 단순 미달성은 '힘들어한 일과' 아님
+    const ref = (s.refused_logs || 0) + (s.refused_transitions || 0);
     if (acc === 0 && give === 0 && ref === 0) return null;
     if (acc >= give && acc >= ref) return 'accepted';
     if (give >= ref) return 'gaveup';
@@ -196,12 +241,16 @@ export default function GuardianRecapScreen({ navigation }: Props) {
               </View>
               <View style={{ alignSelf: 'stretch', marginTop: 14 }}>
                 {items.map((it) => {
-                  const ok = it.status === 'achieved';
+                  const ok = it.status === 'achieved' && !it.early_stop;
+                  const missed = it.status === 'missed' || it.early_stop; // 명시적 미달성/중도포기만 빨강
+                  // pending(아직 기록 없음)은 실패가 아니라 '대기'(회색) — 빨간 미완료로 칠하지 않음
+                  const label = ok ? '완료' : missed ? '미완료' : '대기';
+                  const color = ok ? '#2D9D63' : missed ? '#D14343' : '#94A3B8';
                   return (
                     <View key={it.schedule_id} style={styles.todayRow}>
                       <Text style={styles.todayTime}>{it.time}</Text>
-                      <Text style={[styles.todayName, !ok && { color: '#C2496B' }]} numberOfLines={1}>{noEmoji(it.title)}</Text>
-                      <Text style={[styles.todayStat, { color: ok ? '#2D9D63' : '#D14343' }]}>{ok ? '완료' : '미완료'}</Text>
+                      <Text style={[styles.todayName, missed && { color: '#C2496B' }]} numberOfLines={1}>{noEmoji(it.title)}</Text>
+                      <Text style={[styles.todayStat, { color }]}>{label}</Text>
                     </View>
                   );
                 })}
@@ -308,13 +357,15 @@ export default function GuardianRecapScreen({ navigation }: Props) {
                     const sg = suggById.get(s.id);
                     const newEnd = sg?.action.new_end_time;
                     const cut = (sg && newEnd && s.end) ? toMin(s.end) - toMin(newEnd) : 0;
-                    const validEnd = s.end && toMin(s.end) > toMin(s.time);   // 깨진 종료시각(종료<시작) 숨김
+                    const bedtime = isBedtime(s.title);
+                    const instant = /기상|일어나|복용|투약|출근|등교|등원|퇴근|하교|하원|세면|양치|씻/.test(s.title || '');
+                    const validEnd = s.end && toMin(s.end) > toMin(s.time) && !instant;   // 순간 일과·깨진 종료시각은 범위 숨김
                     const willReduce = reduceIds.has(s.id);
                     const willRest = restIds.has(s.id);
                     return (
                       <View key={s.id} style={[styles.schedBlock, willReduce && { opacity: 0.5 }]}>
                         <View style={styles.schedRow}>
-                          <Text style={styles.schedTime}>{s.time}{validEnd ? `~${s.end}` : ''}</Text>
+                          <Text style={styles.schedTime}>{s.time}{bedtime ? '~기상' : (validEnd ? `~${s.end}` : '')}</Text>
                           <SchedIcon title={s.title} size={36} radius={9} />
                           <Text style={styles.schedName} numberOfLines={1}>{noEmoji(s.title)}</Text>
                           {sg ? <Text style={styles.schedCut}>{cut > 0 ? `${cut}분 단축` : `${-cut}분 늘림`}</Text>
@@ -347,6 +398,8 @@ export default function GuardianRecapScreen({ navigation }: Props) {
                         const nm = noEmoji(s.title || '');
                         const act = s.type === 'shorten' ? ((s.new_min ?? 0) < (s.planned_min ?? 0) ? '시간 단축' : '시간 늘리기')
                           : s.type === 'rest' ? '앞 휴식 추가' : s.type === 'reduce' ? '빼기' : '조정';
+                        const dec = decided[i];
+                        const canEdit = s.type === 'shorten' || s.type === 'rest'; // reduce는 수정값 없음
                         return (
                           <View key={`ai${i}`} style={[styles.aiCard, { width: AI_CARD_W }]}>
                             <View style={styles.aiCardTop}>
@@ -356,17 +409,35 @@ export default function GuardianRecapScreen({ navigation }: Props) {
                               {suggestions.length > 1 && <Text style={styles.aiCardCount}>{i + 1}/{suggestions.length}</Text>}
                             </View>
                             <Text style={styles.aiCardMsg}>{s.message}</Text>
+                            {dec === 'accepted' ? (
+                              <Text style={styles.suggAccepted}>✓ 반영했어요</Text>
+                            ) : dec === 'rejected' ? (
+                              <Text style={styles.suggRejected}>거절함</Text>
+                            ) : (
+                              <View style={styles.suggBtnRow}>
+                                <TouchableOpacity style={[styles.suggBtn, styles.suggReject]} onPress={() => rejectOne(i)}>
+                                  <Text style={styles.suggRejectText}>거절</Text>
+                                </TouchableOpacity>
+                                {canEdit && (
+                                  <TouchableOpacity style={[styles.suggBtn, styles.suggEdit]} onPress={() => openEditSugg(i)}>
+                                    <Text style={styles.suggEditText}>수정</Text>
+                                  </TouchableOpacity>
+                                )}
+                                <TouchableOpacity style={[styles.suggBtn, styles.suggAccept]} onPress={() => applyOne(i)}>
+                                  <Text style={styles.suggAcceptText}>수락</Text>
+                                </TouchableOpacity>
+                              </View>
+                            )}
                           </View>
                         );
                       })}
                     </ScrollView>
                   )}
-                  {hasApplicable && !applied && (
+                  {hasApplicable && suggestions.some((_, i) => !decided[i]) && (
                     <TouchableOpacity style={styles.applyBtn} activeOpacity={0.85} onPress={applyAll}>
-                      <Text style={styles.applyBtnText}>이대로 바꾸기</Text>
+                      <Text style={styles.applyBtnText}>남은 추천 모두 수락</Text>
                     </TouchableOpacity>
                   )}
-                  {applied && <Text style={styles.appliedNote}>✓ 내일 스케줄에 반영했어요</Text>}
                   <TouchableOpacity style={styles.editLink} activeOpacity={0.7} onPress={() => navigation.navigate('ScheduleEdit')}>
                     <Text style={styles.editLinkText}>내일 스케줄 직접 수정하기 ›</Text>
                   </TouchableOpacity>
@@ -391,6 +462,31 @@ export default function GuardianRecapScreen({ navigation }: Props) {
           </TouchableOpacity>
         )}
       </View>
+
+      {/* 추천 수정 모달 */}
+      <Modal visible={editIdx != null} transparent animationType="fade">
+        <View style={styles.editOverlay}>
+          <View style={styles.editCard}>
+            <Text style={styles.editTitle}>추천 수정</Text>
+            {editIdx != null && suggestions[editIdx]?.type === 'shorten' && (
+              <>
+                <Text style={styles.editLabel}>종료 시각</Text>
+                <TimePickerField value={editEnd} onChange={setEditEnd} />
+              </>
+            )}
+            {editIdx != null && suggestions[editIdx]?.type === 'rest' && (
+              <View style={styles.editTimeRow}>
+                <View><Text style={styles.editLabel}>휴식 시작</Text><TimePickerField value={editRestStart} onChange={setEditRestStart} /></View>
+                <View><Text style={styles.editLabel}>휴식 끝</Text><TimePickerField value={editRestEnd} onChange={setEditRestEnd} /></View>
+              </View>
+            )}
+            <View style={styles.editBtns}>
+              <TouchableOpacity style={styles.editCancel} onPress={() => setEditIdx(null)}><Text style={styles.editCancelText}>취소</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.editConfirm} onPress={confirmEditSugg}><Text style={styles.editConfirmText}>이대로 적용</Text></TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
    </AppFrame>
   );
@@ -511,6 +607,29 @@ const styles = StyleSheet.create({
   appliedNote: { color: '#16A34A', fontWeight: '800', fontSize: 14, marginTop: 14 },
   applyBtn: { alignSelf: 'stretch', backgroundColor: colors.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 16 },
   applyBtnText: { color: '#fff', fontWeight: '900', fontSize: 15 },
+
+  // 추천 카드 — 거절/수정/수락
+  suggBtnRow: { flexDirection: 'row', gap: 6, marginTop: 10 },
+  suggBtn: { flex: 1, paddingVertical: 9, borderRadius: 10, alignItems: 'center' },
+  suggReject: { backgroundColor: '#F1F5F9' },
+  suggRejectText: { color: '#64748B', fontWeight: '800', fontSize: 13 },
+  suggEdit: { backgroundColor: '#FEF3E2' },
+  suggEditText: { color: '#C97A2B', fontWeight: '800', fontSize: 13 },
+  suggAccept: { backgroundColor: colors.primary },
+  suggAcceptText: { color: '#fff', fontWeight: '900', fontSize: 13 },
+  suggAccepted: { color: '#16A34A', fontWeight: '800', fontSize: 13, marginTop: 10 },
+  suggRejected: { color: '#94A3B8', fontWeight: '800', fontSize: 13, marginTop: 10 },
+  // 수정 모달
+  editOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', paddingHorizontal: 28 },
+  editCard: { backgroundColor: '#fff', borderRadius: 18, padding: 20 },
+  editTitle: { fontSize: 18, fontWeight: '900', color: '#1E293B', marginBottom: 14, textAlign: 'center' },
+  editLabel: { fontSize: 13, fontWeight: '700', color: '#64748B', marginBottom: 6, marginTop: 8 },
+  editTimeRow: { flexDirection: 'row', gap: 16, justifyContent: 'center' },
+  editBtns: { flexDirection: 'row', gap: 10, marginTop: 18 },
+  editCancel: { flex: 1, paddingVertical: 13, borderRadius: 12, backgroundColor: '#F1F5F9', alignItems: 'center' },
+  editCancelText: { color: '#64748B', fontWeight: '800', fontSize: 15 },
+  editConfirm: { flex: 1, paddingVertical: 13, borderRadius: 12, backgroundColor: colors.primary, alignItems: 'center' },
+  editConfirmText: { color: '#fff', fontWeight: '900', fontSize: 15 },
 
   footer: { paddingHorizontal: 22, paddingBottom: 14, paddingTop: 6 },
   nextBtn: {

@@ -20,7 +20,6 @@ import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
 import { api } from '../../api/client';
 import { registerPushToken } from '../../utils/push';
-import WeeklyRateChart from '../../components/WeeklyRateChart';
 import AppFrame from '../../components/AppFrame';
 import { SchedIcon } from '../../components/SchedIcon';
 
@@ -28,12 +27,15 @@ type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'GuardianReport'>;
 };
 
-type CurrentSchedule = { id: number; title: string; time: string; started?: boolean; status?: 'in_progress' | 'todo' | 'done' | 'missed' };
+type CurrentSchedule = { id: number; title: string; time: string; started?: boolean; status?: 'in_progress' | 'todo' | 'done' | 'missed' | 'gaveup' | 'refused' };
 const CUR_STATUS: Record<string, { label: string; color: string }> = {
   in_progress: { label: '지금 진행 중', color: '#2D9D63' },
+  sleeping:    { label: '취침 중',      color: '#7C6BD6' },
   todo:        { label: '지금 할 일',   color: '#E07B39' },
   done:        { label: '완료했어요',   color: '#2D9D63' },
-  missed:      { label: '못했어요',     color: '#8C9BB0' },
+  gaveup:      { label: '중도 포기',    color: '#C97A2B' },
+  refused:     { label: '거절했어요',   color: '#D64545' },
+  missed:      { label: '아직 못했어요', color: '#8C9BB0' },
 };
 type ReportItem = { schedule_id: number; title: string; time: string; status: string };
 type TodayReport = {
@@ -71,7 +73,7 @@ type Dashboard = {
   tomorrow_schedules: TomorrowSchedule[];
   suitability?: Suitability[];
   self_assessment?: 'good' | 'soso' | 'bad' | null;
-  today_items?: { schedule_id: number; title: string; time: string; status: string; end?: string | null; early_stop?: boolean; duration?: number | null; note?: string | null; ai_summary?: string | null }[];
+  today_items?: { schedule_id: number; title: string; time: string; status: string; end?: string | null; early_stop?: boolean; refusal_count?: number; duration?: number | null; note?: string | null; ai_summary?: string | null }[];
   weekly_rates?: { label: string; rate: number; has: boolean }[];
   user_name?: string;
 };
@@ -101,6 +103,10 @@ function nowHHMM(): string {
   return `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`;
 }
 const toMin = (hhmm: string) => { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; };
+// 밤 취침(낮잠 제외) — 달성 대상이 아니라 '취침'으로만 표시
+const isBedtime = (t: string) => /취침|수면|자기|잠자기|잠자|잠들/.test(t || '') && !(t || '').includes('낮잠');
+// ⚠️ 테스트용: true면 Recap '하루 1회' 확인 플래그를 무시하고 자기평가 완료 시 매번 자동 진입. 실배포 전 false로.
+const RECAP_TEST = false;
 
 function formatTime(hhmm: string): string {
   const [h, m] = hhmm.split(':').map(Number);
@@ -186,8 +192,10 @@ export default function GuardianReportScreen({ navigation }: Props) {
   }, []);
   // 아직 오늘 Recap을 확인 안 했으면 자동 진입 (탭/푸시 타이밍 무관)
   const autoOpenRecap = useCallback(async () => {
-    if (recapDoneRef.current) return;
-    try { if (await AsyncStorage.getItem(await recapKey())) { recapDoneRef.current = true; return; } } catch {}
+    if (!RECAP_TEST) {
+      if (recapDoneRef.current) return;
+      try { if (await AsyncStorage.getItem(await recapKey())) { recapDoneRef.current = true; return; } } catch {}
+    }
     await markRecapSeen();
     navigation.navigate('GuardianRecap');
   }, [navigation, markRecapSeen]);
@@ -247,7 +255,9 @@ export default function GuardianReportScreen({ navigation }: Props) {
       {
         text: '로그아웃', style: 'destructive',
         onPress: async () => {
-          await AsyncStorage.clear();
+          // 오늘 '한 번 봤음' 플래그는 보존하고 인증/기타만 제거
+          const keys = await AsyncStorage.getAllKeys();
+          await AsyncStorage.multiRemove(keys.filter(k => !k.startsWith('selfAssess:') && !k.startsWith('recapSeen:')));
           navigation.reset({ index: 0, routes: [{ name: 'Auth' }] });
         },
       },
@@ -310,9 +320,23 @@ export default function GuardianReportScreen({ navigation }: Props) {
                   <Text style={styles.tTime}>{formatTime(item.time)}</Text>
                   <SchedIcon title={item.title} size={30} radius={8} />
                   <Text style={styles.tLabel} numberOfLines={1}>{noEmoji(item.title)}</Text>
-                  <View style={[styles.taskBadge, { backgroundColor: statusBg(item.status) }]}>
-                    <Text style={styles.taskBadgeText}>{statusLabel(item.status)}</Text>
-                  </View>
+                  {(() => {
+                    const bed = isBedtime(item.title);
+                    const lbl = bed ? '취침'
+                      : item.early_stop ? '중도 포기'
+                      : item.status === 'missed' ? ((item.refusal_count ?? 0) > 0 ? '거절' : '미달성')
+                      : statusLabel(item.status);
+                    const bg = bed ? '#EDE9FB'
+                      : item.early_stop ? '#FDE9D2'
+                      : (item.status === 'missed' && (item.refusal_count ?? 0) > 0) ? '#FEE2E2'
+                      : item.status === 'missed' ? '#EEF1F6'
+                      : statusBg(item.status);
+                    return (
+                      <View style={[styles.taskBadge, { backgroundColor: bg }]}>
+                        <Text style={styles.taskBadgeText}>{lbl}</Text>
+                      </View>
+                    );
+                  })()}
                 </View>
               ))}
             </View>
@@ -349,8 +373,8 @@ export default function GuardianReportScreen({ navigation }: Props) {
             </View>
           )}
 
-          {/* ── 지금 당사자 상황 (진행중/완료/미달성/할 일) ── */}
-          <Text style={styles.sectionTitle}>지금 당사자 상황</Text>
+          {/* ── 지금 당사자 상황 (진행중/완료/미달성/중도포기/할 일) ── */}
+          <Text style={styles.sectionTitle}>{(data?.user_name || '아이')}님은 지금 무엇을 하고 있을까요?</Text>
           {data?.current_schedule ? (() => {
             const st = CUR_STATUS[data.current_schedule.status || 'todo'] || CUR_STATUS.todo;
             return (
@@ -403,9 +427,10 @@ export default function GuardianReportScreen({ navigation }: Props) {
             const its = data?.today_items ?? [];
             type HardRow = { it: any; kind: string; color: string; detail: string | null };
             const rows: HardRow[] = [
-              ...its.filter(i => i.status === 'missed')
+              // 거절 = 실시간에 거부(refusal_count>0). 단순 미달성(캐치업 안했어요)은 제외
+              ...its.filter(i => i.status === 'missed' && !i.early_stop && (i.refusal_count ?? 0) > 0)
                 .map(it => ({ it, kind: '거절', color: '#D64545', detail: it.note ? `“${it.note}”` : null })),
-              ...its.filter(i => i.status === 'achieved' && i.early_stop)
+              ...its.filter(i => i.early_stop)
                 .map(it => ({ it, kind: '중도 포기', color: '#C97A2B', detail: it.note ? `“${it.note}”` : null })),
               ...its.filter(i => i.status === 'achieved' && !i.early_stop && i.duration && i.end && i.duration > (toMin(i.end) - toMin(i.time)))
                 .map(it => ({ it, kind: '오래 걸림', color: '#E07B39', detail: `예상보다 +${(it.duration ?? 0) - (toMin(it.end!) - toMin(it.time))}분` })),

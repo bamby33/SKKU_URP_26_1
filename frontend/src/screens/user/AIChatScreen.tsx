@@ -384,6 +384,8 @@ export default function AIChatScreen({ navigation, route }: Props) {
       if (currentDb > 0) chatContext.decibel = currentDb;
       if (route.params?.behaviorAlert && !helpTalk) chatContext.behavior_stage = 'stage_2';
       else if (route.params?.behaviorStage1 && !helpTalk) chatContext.behavior_stage = 'stage_1';
+      if (route.params?.scheduleTitle) chatContext.schedule_title = route.params.scheduleTitle; // AI가 현재 일과를 알게(일반/행동/도움 모드 공통)
+      if (route.params?.scheduleCategory) chatContext.schedule_category = route.params.scheduleCategory; // 과제분할 판단용(productive면 단계 쪼개기)
       const res = await sendChat(userId, text, Object.keys(chatContext).length ? chatContext : undefined);
       const { reply, stage, feedback } = res.data;
       if (reply) {

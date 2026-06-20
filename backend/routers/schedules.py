@@ -105,9 +105,40 @@ def replace_schedules(user_id: int, data: ReplaceSchedulesRequest, db: Session =
     by_key = {(e.title, e.scheduled_time): e for e in existing}
     kept: set[int] = set()
     result_ids: list[int] = []
+
+    # 취침 특수성: 밤 취침 이후엔 다음날 기상뿐 → 하루(요일)에 실제 취침은 하나만.
+    # 같은 요일에 취침이 여러 개면 가장 이른 시각만 남기고 그 뒤 취침은 제거.
+    # (낮잠·'취침 준비'는 실제 취침이 아니므로 제외)
+    def _is_bedtime(inc) -> bool:
+        return (normalize_category(inc.category, inc.title) == "sleep"
+                and "낮잠" not in inc.title and "준비" not in inc.title)
+    _bedtimes = sorted([s for s in data.schedules if _is_bedtime(s)], key=lambda x: x.scheduled_time)
+    _claimed_days: set[str] = set()
+    _drop_ids: set[int] = set()
+    for s in _bedtimes:
+        days = [d.strip() for d in (s.days_of_week or "").split(",") if d.strip() != ""]
+        remaining = [d for d in days if d not in _claimed_days]
+        if not remaining:
+            _drop_ids.add(id(s))            # 더 이른 취침이 모든 요일 차지 → 이 취침 제거
+        else:
+            s.days_of_week = ",".join(remaining)  # 이른 취침이 안 차지한 요일만 유지
+            _claimed_days.update(remaining)
+
+    from services.category import canonical_key
+    from models.database import ScheduleLog
+    from timeutil import kst_today_start
+
+    seen_keys: set = set()       # 같은 입력 (제목,시각) 중복 생성 방지
+    created: list = []           # 새로 만든 일과 (Schedule, canonical_key)
     for inc in data.schedules:
+        if id(inc) in _drop_ids:
+            continue                         # 뒤(늦은) 취침 자동 삭제
+        key = (inc.title, inc.scheduled_time)
+        if key in seen_keys:
+            continue                         # 동일 일과 중복 입력 → 한 번만 (중복 일과 누적 방지)
+        seen_keys.add(key)
         cat = normalize_category(inc.category, inc.title)
-        ex = by_key.get((inc.title, inc.scheduled_time))
+        ex = by_key.get(key)
         if ex and ex.id not in kept:
             # 기존 일과 재사용 → ID·로그 보존
             ex.end_time = inc.end_time
@@ -125,10 +156,26 @@ def replace_schedules(user_id: int, data: ReplaceSchedulesRequest, db: Session =
             db.add(s)
             db.flush()
             result_ids.append(s.id)
-    # 들어오지 않은 기존 일과는 비활성화 (소프트 삭제, 과거 로그 보존)
+            created.append((s, canonical_key(inc.title)))
+
+    # 들어오지 않은 기존 일과는 비활성화 (소프트 삭제, 과거 로그 보존).
+    # ⚠️ 로그 승계: 시간/제목 편집으로 id가 새로 발급된 경우, 같은 canonical_key(예: 아침식사)의
+    #    새 일과로 '오늘' 완료 로그를 옮겨준다 → 편집해도 오늘 달성 기록이 사라지지 않음.
+    new_pool: dict = {}
+    for s, ck in created:
+        new_pool.setdefault(ck, []).append(s)
+    today0 = kst_today_start()
     for e in existing:
-        if e.id not in kept:
-            e.is_active = False
+        if e.id in kept:
+            continue
+        e.is_active = False
+        pool = new_pool.get(canonical_key(e.title))
+        if pool:
+            target = pool.pop(0)             # 같은 일과의 새 id로 오늘 로그 승계 (1:1)
+            db.query(ScheduleLog).filter(
+                ScheduleLog.schedule_id == e.id,
+                ScheduleLog.log_date >= today0,
+            ).update({ScheduleLog.schedule_id: target.id}, synchronize_session=False)
     db.commit()
     return {"ok": True, "ids": result_ids}
 
@@ -313,11 +360,13 @@ def get_today_report(user_id: int, db: Session = Depends(get_db)):
     items = []
     for s in ach["schedules"]:
         log = lm.get(s.id)
+        # 중도포기(early_stop)는 완료가 아니라 미달성으로 — 당사자 '괜찮아요'/달성률 제외 일관
+        _st = "missed" if (log and log.early_stop) else (log.status if log else "pending")
         items.append({
             "schedule_id": s.id,
             "title": s.title,
             "time": s.scheduled_time,
-            "status": log.status if log else "pending",
+            "status": _st,
             "refusal_count": (log.refusal_count or 0) if log else 0,  # 거부 n회 (구)
             "reason": (log.note if log else None),                    # 사유/메모
             "response_type": (log.response_type if log else None),    # started | later | no_response

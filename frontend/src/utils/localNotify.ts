@@ -118,83 +118,69 @@ export async function scheduleGuardianRecap(schedules: Sched[]): Promise<void> {
   });
 }
 
-/** 오늘 남은 일과들에 대해 시각별 로컬 알림 예약 (기존 예약은 모두 갱신) */
+// app 요일(0=월..6=일) → 시각별 '반복' 트리거 목록.
+// 매일(7요일) 이면 DAILY 1개, 특정 요일이면 요일별 WEEKLY. → 앱을 안 열어도 매일/매주 자동으로 울림.
+function repeatTriggers(daysCsv: string, hour: number, minute: number): any[] {
+  const ch = Platform.OS === 'android' ? ANDROID_CHANNEL : undefined;
+  const days = daysCsv.split(',').map(Number).filter(d => d >= 0 && d <= 6);
+  if (days.length === 0) return [];
+  if (days.length >= 7) {
+    return [{ type: Notifications.SchedulableTriggerInputTypes.DAILY, hour, minute, channelId: ch }];
+  }
+  return days.map(d => {
+    const weekday = ((d + 1) % 7) + 1; // 0=월..6=일 → Expo weekday(1=일..7=토)
+    return { type: Notifications.SchedulableTriggerInputTypes.WEEKLY, weekday, hour, minute, channelId: ch };
+  });
+}
+
+/** 일과별 '반복' 로컬 알림 예약 (앱을 안 열어도 매일/매주 자동 발생). 호출 시 기존 예약 전체 갱신.
+ * ⚠️ iOS는 예약 알림을 최대 64개만 유지(가장 빨리 울릴 순)하므로, 시작 알림을 먼저 다 잡고 예고는 남는 만큼만. */
 export async function scheduleTodayNotifications(schedules: Sched[]): Promise<void> {
   const ok = await ensureNotifPermission();
   if (!ok) return;
   await Notifications.cancelAllScheduledNotificationsAsync();
 
-  const today = todayIdx();
-  const now = new Date();
-  for (const s of schedules) {
-    if (!s.days_of_week.split(',').map(Number).includes(today)) continue;
-    const [h, m] = s.scheduled_time.split(':').map(Number);
-    const when = new Date();
-    when.setHours(h, m, 0, 0);
+  const MAX = 60; // 64 한도 여유
+  type N = { content: any; trigger: any };
+  const starts: N[] = [], pres: N[] = [], summary: N[] = [];
 
+  // 아침 일과가 한도에 밀리지 않게 시각 오름차순 처리
+  const sorted = [...schedules].sort((a, b) => a.scheduled_time.localeCompare(b.scheduled_time));
+  for (const s of sorted) {
+    const [h, m] = s.scheduled_time.split(':').map(Number);
     const name = stripEmoji(s.title) || '일과';
     const isFixed = s.category === 'fixed';
     const isSleepCat = s.category === 'sleep' || SLEEP_KW.some(k => s.title.includes(k));
 
-    // ① 전환 예고 — 기본 10분 전, fixed(외부기관)는 20분 전 + 준비 문구. sleep은 예고 없음
-    const preMin = isFixed ? 20 : 10;
-    const preWhen = new Date(when.getTime() - preMin * 60000);
-    if (!isSleepCat && preWhen.getTime() > now.getTime()) {
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: '곧 시작이에요',
-          body: isFixed ? `곧 ${name} 갈 시간이에요. 준비해볼까요? 🎒` : `${preMin}분 뒤 ${name} 시간이에요 😊`,
-          data: { type: 'pretransition', scheduleId: s.id },
-          sound: false,
-        },
-        trigger: {
-          type: Notifications.SchedulableTriggerInputTypes.DATE,
-          date: preWhen,
-          channelId: Platform.OS === 'android' ? ANDROID_CHANNEL : undefined,
-        },
-      });
+    // 시작 알림 (필수)
+    for (const trigger of repeatTriggers(s.days_of_week, h, m)) {
+      starts.push({ content: { title: '일과 시간이에요', body: `${name} 시작할까요? 눌러서 확인해요`, data: { type: 'schedule', scheduleId: s.id }, sound: true }, trigger });
     }
-
-    // ② 시작 알림 (정시) — 눌러서 시작 흐름
-    if (when.getTime() <= now.getTime()) continue; // 이미 지난 시각은 예약 안 함
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: '일과 시간이에요',
-        body: `${name} 시작할까요? 눌러서 확인해요`,
-        data: { type: 'schedule', scheduleId: s.id },
-        sound: true,
-      },
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.DATE,
-        date: when,
-        channelId: Platform.OS === 'android' ? ANDROID_CHANNEL : undefined,
-      },
-    });
+    // 전환 예고 (여유 있을 때만) — 10분 전, fixed는 20분 전. sleep 제외, 자정 이전 넘어가면 생략
+    const preMin = isFixed ? 20 : 10;
+    const preTotal = h * 60 + m - preMin;
+    if (!isSleepCat && preTotal >= 0) {
+      for (const trigger of repeatTriggers(s.days_of_week, Math.floor(preTotal / 60), preTotal % 60)) {
+        pres.push({ content: { title: '곧 시작이에요', body: isFixed ? `곧 ${name} 갈 시간이에요. 준비해볼까요? 🎒` : `${preMin}분 뒤 ${name} 시간이에요 😊`, data: { type: 'pretransition', scheduleId: s.id }, sound: false }, trigger });
+      }
+    }
   }
 
-  // ③ 하루 마무리 — 취침 1시간 전 (탭하면 DailySummary)
-  const sleepSched = schedules
-    .filter(s => s.days_of_week.split(',').map(Number).includes(today) && SLEEP_KW.some(k => s.title.includes(k)))
-    .sort((a, b) => a.scheduled_time.localeCompare(b.scheduled_time))
-    .pop();
+  // 하루 마무리 — 취침 1시간 전 (탭하면 DailySummary)
+  const today = todayIdx();
+  const sleepSched = sorted.filter(s => SLEEP_KW.some(k => s.title.includes(k))).pop();
   if (sleepSched) {
     const [sh, sm] = sleepSched.scheduled_time.split(':').map(Number);
-    const sumMin = quietTimeMin(sh * 60 + sm - 60, startMins(schedules, today)); // 취침 1시간 전, 스케줄과 충돌 회피
-    const sumWhen = atMin(sumMin);
-    if (sumWhen.getTime() > now.getTime()) {
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: '오늘 하루 어땠어요?',
-          body: '오늘 하루를 함께 정리해볼까요? 눌러주세요 😊',
-          data: { type: 'daily_summary' },
-          sound: true,
-        },
-        trigger: {
-          type: Notifications.SchedulableTriggerInputTypes.DATE,
-          date: sumWhen,
-          channelId: Platform.OS === 'android' ? ANDROID_CHANNEL : undefined,
-        },
-      });
+    const sumMin = quietTimeMin(sh * 60 + sm - 60, startMins(schedules, today));
+    if (sumMin >= 0) {
+      for (const trigger of repeatTriggers(sleepSched.days_of_week, Math.floor(sumMin / 60), sumMin % 60)) {
+        summary.push({ content: { title: '오늘 하루 어땠어요?', body: '오늘 하루를 함께 정리해볼까요? 눌러주세요 😊', data: { type: 'daily_summary' }, sound: true }, trigger });
+      }
     }
+  }
+
+  // 우선순위: 시작 알림 → 마무리 → 예고. 64 한도 내에서만 예약(초과분 버림 → 시작 알림이 살아남게).
+  for (const n of [...starts, ...summary, ...pres].slice(0, MAX)) {
+    await Notifications.scheduleNotificationAsync({ content: n.content, trigger: n.trigger });
   }
 }

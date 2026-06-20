@@ -77,7 +77,7 @@ export type RootStackParamList = {
   Feedback: { scheduleId: number; achieved: boolean; title: string };
   Emergency: { stage?: 'stage_1' | 'stage_2' | 'stage_3' };
   GuardianReport: undefined;
-  AIChat: { followUpSchedule?: string; followUpId?: number; followUpAttempt?: number; behaviorAlert?: boolean; behaviorStage1?: boolean; behaviorFollowup?: boolean; spokenText?: string; reasonAsk?: { scheduleId: number; title: string; kind: 'refused' | 'gaveup' } } | undefined;
+  AIChat: { followUpSchedule?: string; followUpId?: number; followUpAttempt?: number; behaviorAlert?: boolean; behaviorStage1?: boolean; behaviorFollowup?: boolean; spokenText?: string; scheduleTitle?: string; scheduleCategory?: string; reasonAsk?: { scheduleId: number; title: string; kind: 'refused' | 'gaveup' } } | undefined;
   TodayScheduleEdit: undefined;
   WeekScheduleEdit: undefined;
   ScheduleEdit: undefined;

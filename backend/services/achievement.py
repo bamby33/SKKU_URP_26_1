@@ -150,8 +150,9 @@ def schedule_suitability(user_id: int, db: Session, days: int = 7) -> list[dict]
         ).all()
         n = len(logs)
         full   = sum(1 for l in logs if l.status == ScheduleStatus.ACHIEVED and not l.early_stop)
-        early  = sum(1 for l in logs if l.status == ScheduleStatus.ACHIEVED and l.early_stop)
-        missed = sum(1 for l in logs if l.status == ScheduleStatus.MISSED)
+        early  = sum(1 for l in logs if l.early_stop)                                  # 중도포기(상태 무관)
+        missed = sum(1 for l in logs if l.status == ScheduleStatus.MISSED and not l.early_stop)  # 미달성(거절 포함)
+        refused_logs = sum(1 for l in logs if l.status == ScheduleStatus.MISSED and not l.early_stop and (l.refusal_count or 0) > 0)  # 실시간 거절
 
         # 예상보다 오래 걸림: 실제 진행시간 > 예정 시간(end-start)
         planned = None
@@ -208,9 +209,9 @@ def schedule_suitability(user_id: int, db: Session, days: int = 7) -> list[dict]
             day_logs = [l for l in logs if ds <= l.log_date < de]
             if any(l.status == ScheduleStatus.ACHIEVED and not l.early_stop for l in day_logs):
                 st = "green"
-            elif any(l.status == ScheduleStatus.ACHIEVED and l.early_stop for l in day_logs):
+            elif any(l.early_stop for l in day_logs):              # 중도포기
                 st = "yellow"
-            elif any(l.status == ScheduleStatus.MISSED for l in day_logs):
+            elif any(l.status == ScheduleStatus.MISSED for l in day_logs):  # 순수 미수행
                 st = "red"
             else:
                 st = "none"
@@ -233,6 +234,7 @@ def schedule_suitability(user_id: int, db: Session, days: int = 7) -> list[dict]
             "category": g.get("category") or "routine",
             "grade": grade, "days": n,
             "completed_full": full, "early_stop": early, "missed": missed,
+            "refused_logs": refused_logs,
             "refused_transitions": refused, "over": over, "over_avg": over_avg,
             "delay_avg": delay_avg, "delay_high": delay_high, "crisis": crisis,
             "needs_review": needs_review,
@@ -279,11 +281,14 @@ def today_achievement(user_id: int, db: Session) -> dict:
     """오늘 달성 현황 (단일 정의).
     분모(total) = '지금까지 시작 시각이 도래한 일과' — 새 일과 시간이 될 때마다 +1.
     → 지금까지 할 일을 다 했으면 100%. (아직 시각이 안 된 미래 일과는 분모에서 제외)"""
+    from services.category import is_bedtime
     scheds = today_schedules(user_id, db)
     lm = latest_log_map([s.id for s in scheds], db)
     now_hhmm = kst_now().strftime("%H:%M")
-    due = [s for s in scheds if s.scheduled_time <= now_hhmm]   # 시각 도래한 일과만 분모에
-    achieved = sum(1 for s in due if lm.get(s.id) and lm[s.id].status == ScheduleStatus.ACHIEVED)
+    # 시각 도래한 일과만 분모에. 단 취침은 시작/완료 개념이 없어 달성 대상에서 제외.
+    due = [s for s in scheds if s.scheduled_time <= now_hhmm and not is_bedtime(s.title)]
+    # 달성 = 끝까지 완료(ACHIEVED & 중도포기 아님). 중도포기(early_stop)는 달성에서 제외
+    achieved = sum(1 for s in due if lm.get(s.id) and lm[s.id].status == ScheduleStatus.ACHIEVED and not lm[s.id].early_stop)
     total = len(due)
     rate = round(achieved / total * 100) if total > 0 else 0
     return {"schedules": scheds, "log_map": lm, "achieved": achieved, "total": total, "rate": rate,

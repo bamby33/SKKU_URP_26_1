@@ -194,6 +194,27 @@ def _build_general_prompt(user_profile: dict | None) -> str:
 - 외국어·특수기호·토큰·마크다운·영어 함수명을 절대 쓰지 말고, 순수 한국어 문장만 답하세요."""
 
 
+_TOOL_WORDS = ("detect_user_response", "provide_feedback", "check_schedule", "send_message",
+               "detect user response", "provide feedback", "check schedule", "send message")
+
+
+def _sanitize_reply(text: str) -> str:
+    """LLM 답변에서 새어 나온 도구 이름·함수호출·토큰·특수기호 제거 (음성/한국어 출력용)."""
+    import re
+    t = text or ""
+    t = re.sub(r"<\|?\s*(end_of_turn|start_of_turn)\s*\|?>", "", t)
+    t = re.sub(r"[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*\)", "", t)   # 함수호출형 word(...) 먼저
+    for w in _TOOL_WORDS:
+        t = re.sub(re.escape(w), "", t, flags=re.IGNORECASE)   # 남은 도구 이름(괄호 없는 경우)
+    t = re.sub(r"\b[a-z]+_[a-z]+(?:_[a-z]+)*\b", "", t)         # 남은 snake_case 영어 토큰
+    # 도구/메타 태그 제거: [호출]·(도구 호출)·[provide_feedback 호출] 등 (괄호 안에 메타어 있으면)
+    t = re.sub(r"[\[\(][^\]\)]*(호출|도구|함수|stage|tool|call|feedback|response)[^\]\)]*[\]\)]", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"\[\s*\]|\(\s*\)", "", t)                       # 빈 괄호 잔여 제거
+    t = re.sub(r"[*#`>|]", "", t)                               # 마크다운 기호('_'는 보존)
+    t = re.sub(r"[ \t]{2,}", " ", t).strip()
+    return t
+
+
 # 디스크 절약: 상세 로그는 CARE_DEBUG=1 일 때만 (실험 중 uvicorn.log 폭증 방지)
 DEBUG = os.getenv("CARE_DEBUG") == "1"
 
@@ -225,6 +246,15 @@ def chat(
     user_content = message
     if context:
         ctx_parts = []
+        if context.get("schedule_title"):
+            ctx_parts.append(f"[현재 일과: '{context['schedule_title']}' — 이 일과에 대해 대화하세요. 무슨 일과인지 되묻지 마세요.]")
+        # 과제분할: 집중이 필요한 생산적 일과에서 어려워하면, 한꺼번에 하라고 하지 말고 아주 작은 첫 단계 하나만 제안
+        if context.get("schedule_category") == "productive" and context.get("behavior_stage") == "stage_1":
+            ctx_parts.append(
+                f"[이 일과는 집중이 필요한 활동입니다. 한꺼번에 다 하라고 하지 말고, "
+                f"전체를 아주 작은 단계로 쪼개서(과제 분할) '가장 쉬운 첫 단계 하나만 같이 해볼까요?'처럼 "
+                f"작은 한 걸음을 제안하세요.]"
+            )
         if context.get("decibel"):
             ctx_parts.append(f"[음성 데시벨: {context['decibel']}dB]")
         if context.get("gps_moved") is not None:
@@ -355,7 +385,7 @@ def chat(
             }
 
     return {
-        "reply":      final_reply,
+        "reply":      _sanitize_reply(final_reply),
         "tool_calls": tool_calls_made,
         "stage":      stage,
         "feedback":   feedback_data,

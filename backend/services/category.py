@@ -29,6 +29,24 @@ def classify_category(title: str) -> str:
     return "routine"  # 기본: 보수적(독려 X, 완전제외 X — 매일 하는 것 가정)
 
 
+_INSTANT_KW = ["기상", "일어나", "복용", "투약", "출근", "등교", "등원",
+               "퇴근", "하교", "하원", "세면", "양치", "씻"]
+
+
+def is_instant(title: str) -> bool:
+    """순간(점) 일과 — 수행시간 개념이 없는 일과(기상·약 복용·세면·양치 등).
+    끝 시간/진행중/duration 없이 '했어요/안했어요'로만 기록. time_adjust(시간단축) 대상에서 제외."""
+    t = title or ""
+    return any(k in t for k in _INSTANT_KW)
+
+
+def is_bedtime(title: str) -> bool:
+    """밤 취침 여부(낮잠 제외) — 시작/완료/달성 대상이 아닌 특수 일과.
+    달성률 계산·목록에서 제외하고 '취침 중'으로만 표시하는 데 사용."""
+    t = title or ""
+    return any(k in t for k in _SLEEP_KW) and "낮잠" not in t
+
+
 def normalize_category(value: str | None, title: str) -> str:
     """AI가 준 category가 유효하면 그대로, 아니면 제목으로 폴백 분류."""
     if value and value.strip().lower() in CATEGORIES:

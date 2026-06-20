@@ -9,6 +9,7 @@ import {
   Modal, Dimensions, Image,
 } from 'react-native';
 import { scheduleImage } from '../../utils/scheduleImage';
+import { SchedIcon } from '../../components/SchedIcon';
 import * as Speech from 'expo-speech';
 import { Audio } from 'expo-av';
 import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from 'expo-speech-recognition';
@@ -23,7 +24,6 @@ import { getSchedules, api } from '../../api/client';
 import { cleanForSpeech } from '../../utils/text';
 import { scheduleTodayNotifications, notifState } from '../../utils/localNotify';
 import AppFrame from '../../components/AppFrame';
-import WalkIcon, { isWalk } from '../../components/WalkIcon';
 
 const { width: SW } = Dimensions.get('window');
 
@@ -53,6 +53,10 @@ const SLEEP_KW   = ['취침', '수면', '자기', '잠자기', '잠'];
 const REFUSE_PRE = ['싫어', '싫다', '안해', '안 해', '하기 싫어', '하기 싫다', '못해', '모르겠어', '몰라', '귀찮아', '안 할래'];
 // 위기신호(2단계 즉시): 격한 표현
 const REFUSE_CRISIS = ['하기 싫다고', '그만해', '시끄러워', '하지 말라고', '짜증나', '저리 가'];
+// 행동/도움 채팅 진입 시 진행 중이던 일과 id — AIChat→홈 복귀로 화면이 재마운트돼 ref가 비어도 식별용
+let behaviorRestId: number | null = null;
+// 진행 중인 일과 — 화면이 재마운트(다른 화면 갔다 홈 복귀)돼도 '진행 중'이 풀리지 않게 모듈에 보존. 완료/그만/휴식 시 해제.
+let activeInProg: { id: number; startedAt: number } | null = null;
 const isPreRefuse    = (t: string) => REFUSE_PRE.some(k => t.includes(k));
 const isCrisisRefuse = (t: string) => REFUSE_CRISIS.some(k => t.includes(k));
 // 감지 임계: 예비신호 → 0단계 확인 / 위기신호 → 2단계 즉시 (기기 테스트로 조정)
@@ -60,7 +64,14 @@ const DB_PRE    = 85;  // 예비신호(0단계)
 const DB_CRISIS = 95;  // 위기신호(2단계)
 const ZERO_TIMEOUT_MS = 6000; // 0단계 무반응 → 1단계
 
-const isSleep    = (t: string) => SLEEP_KW.some(k => t.includes(k));
+// 밤 취침만 sleep으로 취급(낮잠 제외) — 낮잠은 일반 일과(시작팝업·달성률·캐치업 대상)로 동작
+const isSleep    = (t: string) => SLEEP_KW.some(k => t.includes(k)) && !t.includes('낮잠');
+// 순간(점) 일과 — 수행시간 없이 '했어요/안했어요'로만 (기상·약복용·세면·양치·출퇴근·등하교)
+const isInstant  = (t: string) => /기상|일어나|복용|투약|출근|등교|등원|퇴근|하교|하원|세면|양치|씻/.test(t || '');
+// ⚠️ 테스트용: true면 자기평가 영구 '하루 1회' 플래그(AsyncStorage)를 무시 → 앱 재시작마다 다시 테스트 가능. 실배포 전 false로.
+const SELF_ASSESS_TEST = false;
+// 자기평가를 이번 앱 세션에 띄운 날짜 — 모듈 레벨이라 화면 재마운트해도 유지(시간 폴백 1분 루프 방지). 앱 재시작 시 초기화.
+let selfAssessShownDate = '';
 const getEmoji   = (t: string) => t.match(/\p{Emoji_Presentation}/u)?.[0] ?? '📋';
 // 제목("🌅 기상·세면")을 앞 이모지 + 이름으로 분리 (이모지 중복/불일치 방지)
 const parseTitle = (t: string): { emoji: string; name: string } => {
@@ -71,6 +82,15 @@ const parseTitle = (t: string): { emoji: string; name: string } => {
   return { emoji: '📋', name: t.trim() };
 };
 const todayIdx   = () => (new Date().getDay() + 6) % 7;
+// 날짜별 "시작 팝업을 이미 띄운/응답한" 일과 id 저장소 — 화면이 재마운트(다른 화면 갔다 홈 복귀)돼도
+// ref가 초기화되어 같은 시작 팝업이 다시 뜨는 것을 방지. 자정 넘어가면 자동 초기화.
+let announcedStore: { date: string; ids: Set<number> } = { date: '', ids: new Set() };
+const announcedSet = (): Set<number> => {
+  const n = new Date();
+  const k = `${n.getFullYear()}-${n.getMonth() + 1}-${n.getDate()}`;
+  if (announcedStore.date !== k) announcedStore = { date: k, ids: new Set() };
+  return announcedStore.ids;
+};
 const nowHHMM    = () => {
   const n = new Date();
   return `${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}`;
@@ -84,7 +104,7 @@ export default function ScheduleScreen({ navigation, route }: Props) {
   const drawerAnim    = useRef(new Animated.Value(DRAWER_W)).current;
   const countdownAnim = useRef(new Animated.Value(1)).current;
   const countdownRef       = useRef<Animated.CompositeAnimation | null>(null);
-  const announcedRef       = useRef<Set<number>>(new Set());
+  const announcedRef       = useRef<Set<number>>(announcedSet()); // 모듈 저장소 공유 → 재마운트해도 유지
   const snoozeRef          = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startTimerRef      = useRef<ReturnType<typeof setTimeout> | null>(null);
   const encourageRef       = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -103,6 +123,7 @@ export default function ScheduleScreen({ navigation, route }: Props) {
   const lastTranscriptRef  = useRef<string>(''); // 감지 중 캡처한 최근 말소리(STT)
   const currentDbRef       = useRef<number>(0);  // 측정 중 최근 데시벨
   const triggeredRef       = useRef(false);      // 한 측정 세션당 1회만 전환
+  const retriedInstantRef  = useRef<Set<number>>(new Set()); // 순간 일과 '안했어요' 1회 재시도 추적
   const pendingRef         = useRef<Schedule | null>(null); // 떠 있는 시작 팝업
   const isFocusedRef       = useRef(true);       // 이 화면이 포커스 상태인지
   const detectCtxRef       = useRef<'transition' | 'in_activity'>('transition'); // 감지 맥락
@@ -143,6 +164,7 @@ export default function ScheduleScreen({ navigation, route }: Props) {
   const [doneIds,          setDoneIds]          = useState<Set<number>>(new Set());
   const [missedIds,        setMissedIds]        = useState<Set<number>>(new Set());
   const [reportLoaded,     setReportLoaded]     = useState(false); // 백엔드 로그 1회 반영 여부 (캐치업 레이스 방지)
+  const [gaveupIds,        setGaveupIds]        = useState<Set<number>>(new Set()); // 중도포기('수고했어요' 표시용, missedIds의 부분집합)
   const doneIdsRef         = useRef<Set<number>>(new Set());
   const missedIdsRef       = useRef<Set<number>>(new Set());
   const [catchUp,          setCatchUp]          = useState<Schedule | null>(null);
@@ -152,6 +174,7 @@ export default function ScheduleScreen({ navigation, route }: Props) {
   const scheduleRetryRef   = useRef<((s: Schedule) => void) | null>(null);
   const retryScheduledRef  = useRef<Set<number>>(new Set()); // 재시도 예약된(대기중) 일과 id — 시작팝업/캐치업 억제
   const [inProg,           setInProg]           = useState<Schedule | null>(null);  // 진행 중인 일과
+  const [restingId,        setRestingId]        = useState<number | null>(null);   // 휴식 중(재시도 대기) 일과 id
   const [toast,            setToast]            = useState<string | null>(null);     // 짧은 안내 토스트
   const [encouragePopup,   setEncouragePopup]   = useState<string | null>(null);     // productive 독려 팝업(10분마다, 8초 자동소멸)
 
@@ -196,12 +219,17 @@ export default function ScheduleScreen({ navigation, route }: Props) {
     const [h, m] = hhmm.split(':').map(Number);
     return (nh * 60 + nm) - (h * 60 + m);
   };
+  // 휴식/재시도로 돌아오는 중이면 그 대상은 캐치업에서 즉시 제외 (restWithRetry 효과보다 먼저 평가되는 레이스 방지)
+  const restTarget = route.params?.restWithRetry ? (inProgRef.current?.id ?? currentSchedRef.current?.id ?? behaviorRestId ?? undefined) : undefined;
   const catchUpCandidates = todaySchedules.filter(s =>
     !isSleepingNow &&
+    !isSleep(s.title) &&          // 취침은 캐치업('지금 하고 있어요') 대상 아님 — 자기평가로 마무리
+    !isInstant(s.title) &&        // 순간 일과도 '지금 하고 있어요'(진행중) 대상 아님 — 했어요/안했어요로만
     minsLate(s.scheduled_time) >= 10 &&
     inProg?.id !== s.id &&        // 진행 중(쉬는 중 포함)인 건 제외 — 재시도 흐름이 담당
     pending?.id !== s.id &&       // 시작 팝업 떠 있는 건 제외
     retryActivity?.id !== s.id && // 재시도 팝업 대상도 제외
+    s.id !== restTarget &&        // 방금 휴식/도와주세요로 돌아온 일과 제외
     !retryScheduledRef.current.has(s.id) && // 재시도 예약 대기 중인 것도 제외
     !doneIds.has(s.id) && !missedIds.has(s.id)
   );
@@ -312,10 +340,50 @@ export default function ScheduleScreen({ navigation, route }: Props) {
   const announce = (s: Schedule) => {
     detectCtxRef.current = 'transition'; // 시작/전환 시점 감지
     currentSchedRef.current = s;
-    if (catOf(s) !== 'sleep') startMeterting(); // sleep 제외 — 0단계/감지 안 함
-    Speech.speak(`${cleanForSpeech(s.title)} 시간이에요! 지금 시작할까요?`, { language: 'ko-KR' });
+    // 취침은 특수 — '지금 할게요/조금있다가요' 시작 팝업 없이 곧장 하루 마무리 자기평가로 연결
+    if (catOf(s) === 'sleep' && !s.title.includes('낮잠')) {
+      Speech.speak('취침 시간이에요. 오늘 하루를 돌아볼까요?', { language: 'ko-KR' });
+      goSelfAssessRef.current?.();
+      return;
+    }
+    // 디텍트는 sleep만 제외 — 순간 일과도 팝업 떠 있는 동안(응답 전까지) 감지
+    if (catOf(s) !== 'sleep') startMeterting();
+    Speech.speak(
+      isInstant(s.title) ? `${cleanForSpeech(s.title)} 했어요?` : `${cleanForSpeech(s.title)} 시간이에요! 지금 시작할까요?`,
+      { language: 'ko-KR' });
     setPending(s);
     countdownAnim.setValue(1); // 시간 제한 없음 — 응답할 때까지 계속 표시
+  };
+
+  // 순간 일과 응답 — 진행중·duration 없이 완료/미수행 기록. '안 했어요'는 1회 부드러운 재시도.
+  const handleInstantResp = (s: Schedule, done: boolean) => {
+    if (startTimerRef.current) { clearTimeout(startTimerRef.current); startTimerRef.current = null; }
+    countdownRef.current?.stop();
+    setPending(null);
+    stopMetering();
+    currentSchedRef.current = null;
+    if (done) {
+      retriedInstantRef.current.delete(s.id);
+      setDoneIds(prev => new Set(prev).add(s.id));
+      api.post('/schedules/check', { schedule_id: s.id, achieved: true }).catch(() => {});
+      Speech.speak('잘했어요! 😊', { language: 'ko-KR' });
+    } else if (!retriedInstantRef.current.has(s.id)) {
+      // 첫 '안 했어요' → 잠시 뒤 한 번 더 물어봄 (강요 X)
+      retriedInstantRef.current.add(s.id);
+      Speech.speak('괜찮아요. 잠시 뒤에 다시 물어볼게요.', { language: 'ko-KR' });
+      if (startTimerRef.current) clearTimeout(startTimerRef.current);
+      startTimerRef.current = setTimeout(() => {
+        if (!doneIdsRef.current.has(s.id) && !missedIdsRef.current.has(s.id)) announce(s);
+      }, SNOOZE_MS);
+    } else {
+      // 재시도 후에도 '안 했어요' → 미수행 확정
+      retriedInstantRef.current.delete(s.id);
+      setMissedIds(prev => new Set(prev).add(s.id));
+      api.post('/schedules/check', { schedule_id: s.id, achieved: false }).catch(() => {});
+      Speech.speak('괜찮아요. 다음에 해봐요.', { language: 'ko-KR' });
+    }
+    const uid = userIdRef.current;
+    if (uid) refreshReport(uid).catch(() => {});
   };
 
   // 시작 모달 응답 처리 (started / later / no_response)
@@ -350,12 +418,14 @@ export default function ScheduleScreen({ navigation, route }: Props) {
 
   // 진행 중 시작 — 독려 토스트는 productive 일과에서만, 장애정도별 주기
   const beginInProgress = (s: Schedule) => {
+    setRestingId(null); // 시작하면 쉬는 중 해제
     setInProg(s);
     inProgRef.current = s;
     detectCtxRef.current = 'in_activity'; // 수행 중 감지로 전환
     currentSchedRef.current = s;
     if (catOf(s) !== 'sleep') startMeterting(); // sleep 제외, 진행 동안 측정
     inProgStartRef.current = Date.now();
+    activeInProg = { id: s.id, startedAt: inProgStartRef.current }; // 재마운트 대비 보존
     Speech.speak(`${cleanForSpeech(s.title)} 시작해요! 잘 할 수 있어요.`, { language: 'ko-KR' });
     if (encourageRef.current) { clearInterval(encourageRef.current); encourageRef.current = null; }
     if (isProductive(s)) { // 독려는 성취 활동(productive)에서만, 10분마다 팝업(8초 자동소멸)
@@ -383,6 +453,7 @@ export default function ScheduleScreen({ navigation, route }: Props) {
     setRetryActivity(null);
     if (!s) return;
     retryScheduledRef.current.delete(s.id); // 재시도 응답함 → 예약 해제
+    setRestingId(null);                       // 쉬는 중 해제
     if (yes) {
       beginInProgress(s); // 다시 진행
     } else {
@@ -392,7 +463,7 @@ export default function ScheduleScreen({ navigation, route }: Props) {
       showToast('괜찮아요. 다음에 또 같이 해봐요 😊');
       const id = userIdRef.current;
       try {
-        await api.post('/schedules/check', { schedule_id: s.id, achieved: false });
+        await api.post('/schedules/check', { schedule_id: s.id, achieved: false, is_refusal: true }); // 실시간 거절
         if (id) await refreshReport(id);
       } catch {}
     }
@@ -407,10 +478,14 @@ export default function ScheduleScreen({ navigation, route }: Props) {
     stopMetering(); // 일과 종료 → 감지 종료
     inProgRef.current = null;
     currentSchedRef.current = null;
+    activeInProg = null; // 진행 종료 → 보존 해제
     const mins = Math.max(0, Math.round((Date.now() - inProgStartRef.current) / 60000));
     setInProg(null);
     setToast(null);
-    setDoneIds(prev => new Set(prev).add(s.id));
+    setRestingId(null);
+    // 다 했어요 → 완료 / 그만할래요(중도포기) → 미달성(+수고했어요 표시)
+    if (completed) setDoneIds(prev => new Set(prev).add(s.id));
+    else { setMissedIds(prev => new Set(prev).add(s.id)); setGaveupIds(prev => new Set(prev).add(s.id)); }
     const id = userIdRef.current;
     // 전환 지연(Phase 3): 완료 시에만 측정 = 지금 시각 − 다음 일과 시작 시각(분). 음수=원활, 양수=지연
     let transition_delay_min: number | undefined;
@@ -428,9 +503,9 @@ export default function ScheduleScreen({ navigation, route }: Props) {
       }
     }
     try {
-      // 다 했어요 → 완료, 그만할래요 → 중도 종료(early_stop)
+      // 다 했어요 → 완료(achieved), 그만할래요 → 미달성+중도종료(early_stop)
       await api.post(`/schedules/${s.id}/stop`, {
-        achieved: true, early_stop: !completed, duration_min: mins,
+        achieved: completed, early_stop: !completed, duration_min: mins,
         transition_delay_min, next_schedule_id,
       });
       if (id) await refreshReport(id);
@@ -506,25 +581,38 @@ export default function ScheduleScreen({ navigation, route }: Props) {
     return () => { sub.remove(); subRecv.remove(); };
   }, []);
 
-  // 자기평가 시간 기반 자동 진입 (취침 1시간 전부터, 하루 1회) — 알림 못 봐도/일과만 눌러도 홈에서 자동으로 뜸
-  const selfAssessShownRef = useRef(false);
+  // 자기평가 진입(가드 포함) — 취침 시작 시 / 시간 폴백에서 공용 호출.
+  // 모듈 레벨 날짜 가드(selfAssessShownDate)로 세션 내 1회만 — 화면 재마운트해도 유지돼 무한 반복 방지.
+  const goSelfAssess = useCallback(async () => {
+    const d = new Date();
+    const dayK = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+    if (selfAssessShownDate === dayK) return; // 오늘 이미 띄움 → 루프/중복 방지
+    const uid = userIdRef.current;
+    const key = `selfAssess:${uid}:${dayK}`;
+    if (!SELF_ASSESS_TEST) {
+      try { if (await AsyncStorage.getItem(key)) { selfAssessShownDate = dayK; return; } } catch {}
+    }
+    selfAssessShownDate = dayK;
+    if (!SELF_ASSESS_TEST) { try { await AsyncStorage.setItem(key, '1'); } catch {} }
+    navigation.navigate('DailySummary');
+  }, [navigation]);
+  const goSelfAssessRef = useRef<(() => void) | null>(null);
+  goSelfAssessRef.current = goSelfAssess;
+
+  // 자기평가 시간 기반 자동 진입 (취침 시각 이후) — 취침 팝업을 놓쳐도 홈에서 자동으로 뜸
   const maybePromptSelfAssess = useCallback(async () => {
-    if (selfAssessShownRef.current) return;
-    if (inProgRef.current || pendingRef.current || zeroCheck) return; // 진행/확인 중이면 방해 안 함
+    const d0 = new Date();
+    if (selfAssessShownDate === `${d0.getFullYear()}-${d0.getMonth() + 1}-${d0.getDate()}`) return; // 오늘 이미 띄움
+    if (inProgRef.current || pendingRef.current || zeroCheck) return; // 진행/확인(취침 팝업 등) 중이면 방해 안 함
     const sleepS = [...todaySchedRef.current]
       .filter(s => isSleep(s.title))
       .sort((a, b) => a.scheduled_time.localeCompare(b.scheduled_time)).pop();
     if (!sleepS) return;
     const [sh, sm] = sleepS.scheduled_time.split(':').map(Number);
     const d = new Date();
-    if (d.getHours() * 60 + d.getMinutes() < sh * 60 + sm - 60) return; // 취침 1시간 전 이후만
-    const uid = userIdRef.current;
-    const key = `selfAssess:${uid}:${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
-    try { if (await AsyncStorage.getItem(key)) { selfAssessShownRef.current = true; return; } } catch {}
-    selfAssessShownRef.current = true;
-    try { await AsyncStorage.setItem(key, '1'); } catch {}
-    navigation.navigate('DailySummary');
-  }, [navigation, zeroCheck]);
+    if (d.getHours() * 60 + d.getMinutes() < sh * 60 + sm) return; // 취침 시각 이후만 (취침 직전 마무리)
+    goSelfAssess();
+  }, [zeroCheck, goSelfAssess]);
   const maybePromptSelfAssessRef = useRef<(() => void) | null>(null);
   maybePromptSelfAssessRef.current = maybePromptSelfAssess;
   // 홈에 머무는 동안 자기평가 시각이 오면 자동 진입 (1분마다 체크)
@@ -561,18 +649,26 @@ export default function ScheduleScreen({ navigation, route }: Props) {
   // 10분+는 캐치업이, 진행중/시작팝업/재시도/완료 중인 건 각 흐름이 담당하므로 제외.
   useEffect(() => {
     if (loading || !screenFocused || !reportLoaded) return;
+    if (route.params?.restWithRetry) return;                  // 휴식/도와주세요로 막 돌아온 중 → 시작팝업 보류(재시도 흐름이 담당)
     if (inProg || pending || catchUp || zeroCheck || retryActivity) return;
     const cur = effectiveCurrent;
     if (!cur || isSleepingNow) return;
-    if (retryScheduledRef.current.has(cur.id)) return;        // 재시도 예약 중이면 시작팝업 안 띄움
+    if (restingId === cur.id || retryScheduledRef.current.has(cur.id)) return; // 쉬는 중/재시도 예약 중이면 시작팝업 안 띄움
     const late = minsLate(cur.scheduled_time);
     if (late < 0 || late >= 10) return;                       // 0~9분 늦음만
     if (doneIds.has(cur.id) || missedIds.has(cur.id)) return;
     if (announcedRef.current.has(cur.id)) return;
     announcedRef.current.add(cur.id);
     announce(cur);
-  }, [loading, screenFocused, reportLoaded, effectiveCurrent?.id, inProg, pending, catchUp, zeroCheck, retryActivity, isSleepingNow]);
+  }, [loading, screenFocused, reportLoaded, route.params?.restWithRetry, effectiveCurrent?.id, inProg, pending, catchUp, zeroCheck, retryActivity, restingId, isSleepingNow]);
 
+
+  // 캐치업에서 "지금 하고 있어요" → 정상 시작 흐름(진행중 + 다했어요/그만할래요)으로 전환
+  const handleCatchUpStart = () => {
+    const s = catchUp;
+    setCatchUp(null);
+    if (s) handleStartResp(s, 'started');
+  };
 
   // 캐치업 응답: 안했으면 재안내·이유 없이 그냥 미달성 (passive)
   const handleCatchUp = async (achieved: boolean) => {
@@ -593,13 +689,29 @@ export default function ScheduleScreen({ navigation, route }: Props) {
   useEffect(() => {
     if (!route.params?.restWithRetry) return;
     navigation.setParams({ restWithRetry: undefined });
-    const s = inProgRef.current || currentSchedRef.current; // 진행 중 일과(없으면 문제행동 일과)
+    // 화면 재마운트로 ref/effectiveCurrent가 비어도, 채팅 진입 시 저장한 behaviorRestId로 대상 식별
+    const restId = inProgRef.current?.id ?? currentSchedRef.current?.id ?? behaviorRestId ?? effectiveCurrent?.id ?? null;
+    behaviorRestId = null;
+    activeInProg = null; // 휴식으로 전환 → 진행중 보존 해제
     inProgRef.current = null;
     currentSchedRef.current = null;
     setInProg(null);
     if (encourageRef.current) { clearInterval(encourageRef.current); encourageRef.current = null; }
     stopMetering();
-    if (s && !doneIds.has(s.id)) scheduleRetryRef.current?.(s); // 5분 뒤 재시도 예약
+    if (restId != null && !doneIdsRef.current.has(restId) && !missedIdsRef.current.has(restId)) {
+      setRestingId(restId);                        // 쉬는 중 표시 → 시작팝업/캐치업 억제
+      retryScheduledRef.current.add(restId);       // 즉시 예약 마킹(스케줄 객체 로드 전이라도 시작팝업 차단)
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = setTimeout(() => {
+        if (doneIdsRef.current.has(restId) || missedIdsRef.current.has(restId)) { retryScheduledRef.current.delete(restId); return; }
+        const sched = todaySchedRef.current.find(x => x.id === restId);
+        if (!sched) { retryScheduledRef.current.delete(restId); return; }
+        retryScheduledRef.current.delete(restId);
+        setRestingId(null);
+        if (isInstant(sched.title)) announce(sched);   // 순간 일과 → '했어요?' 재안내
+        else setRetryActivity(sched);                  // 지속 일과 → '다시 해볼래?' 재시도
+      }, RETRY_MS);
+    }
   }, [route.params?.restWithRetry]);
 
   // pending(시작 팝업) 미러 — STT 핸들러 등 ref 접근용
@@ -647,6 +759,12 @@ export default function ScheduleScreen({ navigation, route }: Props) {
         const res = await getSchedules(id);
         setSchedules(res.data);
         scheduleTodayNotifications(res.data).catch(() => {}); // 오늘 일과 로컬 알림 예약
+        // 재마운트 전에 진행 중이던 일과가 있으면 '진행 중' 복원 (완료/미수행은 inProgActive가 자동으로 가림)
+        if (activeInProg) {
+          const ip = res.data.find((x: Schedule) => x.id === activeInProg!.id);
+          if (ip) { setInProg(ip); inProgRef.current = ip; currentSchedRef.current = ip; inProgStartRef.current = activeInProg.startedAt; }
+          else activeInProg = null;
+        }
         const notifRes = await api.get(`/notifications/user/${id}/unread`);
         setNotifications(notifRes.data);
         try { await refreshReport(id); } catch {}
@@ -665,6 +783,7 @@ export default function ScheduleScreen({ navigation, route }: Props) {
     const items = d.items ?? [];
     setDoneIds(new Set<number>(items.filter((it: any) => it.status === 'achieved').map((it: any) => it.schedule_id)));
     setMissedIds(new Set<number>(items.filter((it: any) => it.status === 'missed').map((it: any) => it.schedule_id)));
+    setGaveupIds(new Set<number>(items.filter((it: any) => it.early_stop).map((it: any) => it.schedule_id)));
     setReportLoaded(true); // 로그 반영 완료 → 이제 캐치업 판단 가능
     return d.achievement_rate ?? 0;
   };
@@ -688,7 +807,8 @@ export default function ScheduleScreen({ navigation, route }: Props) {
     if (zeroTimerRef.current) { clearTimeout(zeroTimerRef.current); zeroTimerRef.current = null; }
     setZeroCheck(false);
     pauseFlows(); // 진행 중 일과 유지 → 돌아와서 이어서 완료
-    navigation.navigate('AIChat', { behaviorAlert: true, spokenText: spoken || undefined });
+    behaviorRestId = (inProgRef.current || currentSchedRef.current)?.id ?? null; // 복귀 시 재시도 대상 식별
+    navigation.navigate('AIChat', { behaviorAlert: true, spokenText: spoken || undefined, scheduleTitle: (inProgRef.current || currentSchedRef.current)?.title, scheduleCategory: (inProgRef.current || currentSchedRef.current)?.category ?? undefined });
     stopMetering();
     logBehavior('stage_2', trigger, decibel);
   };
@@ -698,7 +818,8 @@ export default function ScheduleScreen({ navigation, route }: Props) {
     if (zeroTimerRef.current) { clearTimeout(zeroTimerRef.current); zeroTimerRef.current = null; }
     setZeroCheck(false);
     pauseFlows(); // 진행 중 일과 유지 → 돌아와서 이어서 완료
-    navigation.navigate('AIChat', { behaviorStage1: true, spokenText: z.spoken || undefined });
+    behaviorRestId = (inProgRef.current || currentSchedRef.current)?.id ?? null; // 복귀 시 재시도 대상 식별
+    navigation.navigate('AIChat', { behaviorStage1: true, spokenText: z.spoken || undefined, scheduleTitle: (inProgRef.current || currentSchedRef.current)?.title, scheduleCategory: (inProgRef.current || currentSchedRef.current)?.category ?? undefined });
     stopMetering();
     logBehavior('stage_1', z.trigger, z.decibel);
   };
@@ -793,6 +914,10 @@ export default function ScheduleScreen({ navigation, route }: Props) {
       api.get(`/notifications/user/${uid}/unread`)
         .then(r => setNotifications(r.data))
         .catch(() => {});
+      // 포커스마다 일과 재요청 — 보호자가 편집/ AI 추천 적용한 변경을 복귀 시 바로 반영(stale 방지)
+      getSchedules(uid)
+        .then(r => { setSchedules(r.data); scheduleTodayNotifications(r.data).catch(() => {}); })
+        .catch(() => {});
       refreshReport(uid).catch(() => {});
     }
     // 홈 복귀 시 자기평가 시간대면 자동 진입 (일과 알림만 눌렀어도 이어서 뜸)
@@ -845,8 +970,11 @@ export default function ScheduleScreen({ navigation, route }: Props) {
           const cardSched = showInlineBtns ? inProg : effectiveCurrent;
           const dCur = !showInlineBtns && curDone;
           const mCur = !showInlineBtns && curMissed;
-          const accent = showInlineBtns ? theme : isSleepingNow ? theme : dCur ? DONE_C : mCur ? MISS_C : theme;
-          const chipText = isSleepingNow ? '취침' : dCur ? '완료' : mCur ? '괜찮아요' : '지금 할 일';
+          const gCur = mCur && cardSched != null && gaveupIds.has(cardSched.id); // 중도포기
+          const REST_C = '#3FB6A8';
+          const isResting = !showInlineBtns && !isSleepingNow && !dCur && !mCur && restingId != null && cardSched?.id === restingId;
+          const accent = showInlineBtns ? theme : isResting ? REST_C : isSleepingNow ? theme : dCur ? DONE_C : gCur ? '#C97A2B' : mCur ? MISS_C : theme;
+          const chipText = isSleepingNow ? '취침' : isResting ? '쉬는 중' : dCur ? '완료' : gCur ? '수고했어요' : mCur ? '괜찮아요' : '지금 할 일';
           return (
             <View style={[
               styles.nowCard,
@@ -854,9 +982,7 @@ export default function ScheduleScreen({ navigation, route }: Props) {
               mCur && { borderWidth: 2, borderColor: MISS_C },
             ]}>
               <View style={styles.nowCardRow}>
-                {!isSleepingNow && cardSched && isWalk(cardSched.title) ? (
-                  <WalkIcon size={84} animated />
-                ) : scheduleImage(cardSched?.title) ? (
+                {scheduleImage(cardSched?.title) ? (
                   <Image source={scheduleImage(cardSched?.title)!} style={styles.nowImg} />
                 ) : (
                   <Animated.Text style={[styles.nowEmoji, { transform: [{ translateY: bounceAnim }] }]}>
@@ -874,8 +1000,12 @@ export default function ScheduleScreen({ navigation, route }: Props) {
                     <Text style={styles.nowTime}>내일 아침까지 푹 쉬세요 🌙</Text>
                   ) : showInlineBtns ? (
                     <Text style={[styles.nowTime, { color: theme, fontWeight: '700' }]}>지금 하고 있어요 👍</Text>
+                  ) : isResting ? (
+                    <Text style={[styles.nowTime, { color: REST_C, fontWeight: '700' }]}>잠깐 쉬고 있어요 🌿 곧 다시 물어볼게요</Text>
                   ) : dCur ? (
                     <Text style={[styles.nowTime, { color: DONE_C, fontWeight: '800' }]}>✓ 완료했어요! 잘했어요</Text>
+                  ) : gCur ? (
+                    <Text style={[styles.nowTime, { color: '#C97A2B', fontWeight: '800' }]}>수고했어요 😊</Text>
                   ) : mCur ? (
                     <Text style={[styles.nowTime, { color: MISS_C, fontWeight: '800' }]}>다음에 또 같이 해봐요 😊</Text>
                   ) : cardSched?.scheduled_time ? (
@@ -897,11 +1027,11 @@ export default function ScheduleScreen({ navigation, route }: Props) {
           );
         })()}
 
-        {/* 취침 시간엔 하루 평가 진입 버튼 상시 노출 (알림 놓쳐도 진입 가능) */}
-        {isSleepingNow && (
+        {/* ⚠️ 테스트 전용 버튼 — SELF_ASSESS_TEST=false면 자동으로 사라짐. 재시작 없이 자기평가 무제한 재진입용. */}
+        {SELF_ASSESS_TEST && (
           <TouchableOpacity style={[styles.assessBtn, { borderColor: theme }]} activeOpacity={0.85}
             onPress={() => navigation.navigate('DailySummary')}>
-            <Text style={[styles.assessBtnText, { color: theme }]}>오늘 하루 평가하기 →</Text>
+            <Text style={[styles.assessBtnText, { color: theme }]}>[테스트] 하루 평가하기 →</Text>
           </TouchableOpacity>
         )}
 
@@ -939,8 +1069,10 @@ export default function ScheduleScreen({ navigation, route }: Props) {
                 <Text style={styles.tomorrowHint}>😴 지금은 취침 시간이에요. 내일 일과를 미리 볼까요?</Text>
               )}
               {listSchedules.map((s, i) => {
-                const sDone   = doneIds.has(s.id);
-                const sMissed = missedIds.has(s.id);
+                // 취침 중 '내일 일과'를 보여줄 땐 오늘의 완료/미달성 상태를 적용하지 않음
+                // (매일 반복 일과는 같은 schedule.id라 오늘 상태가 내일 항목에 잘못 매칭됨)
+                const sDone   = !isSleepingNow && doneIds.has(s.id);
+                const sMissed = !isSleepingNow && missedIds.has(s.id);
                 // '진행 중'은 완료/미완료가 아닐 때만 (완료된 걸 진행 중으로 표시하던 모순 방지)
                 const isCurrent = !isSleepingNow && effectiveCurrent?.id === s.id && !sDone && !sMissed;
                 const isLast    = i === listSchedules.length - 1;
@@ -960,16 +1092,17 @@ export default function ScheduleScreen({ navigation, route }: Props) {
                       isCurrent && { borderColor: theme + '66', borderWidth: 1.5 },
                     ]}>
                       <Text style={styles.tlTime}>{s.scheduled_time}</Text>
-                      {isWalk(s.title) ? <WalkIcon size={30} />
-                        : scheduleImage(s.title) ? <Image source={scheduleImage(s.title)!} style={styles.tlImg} />
+                      {scheduleImage(s.title) ? <Image source={scheduleImage(s.title)!} style={styles.tlImg} />
                         : <Text style={styles.tlEmoji}>{sEmoji}</Text>}
                       <Text style={[styles.tlTitle, isCurrent && { color: '#1E293B', fontWeight: '900' }]}
                         numberOfLines={1}>
                         {sName}
                       </Text>
-                      {isCurrent && <Text style={styles.nowLabel}>{inProg?.id === s.id ? '진행 중' : '지금 할 일'}</Text>}
+                      {isCurrent && <Text style={[styles.nowLabel, restingId === s.id && { color: '#3FB6A8' }]}>{inProg?.id === s.id ? '진행 중' : restingId === s.id ? '쉬는 중' : '지금 할 일'}</Text>}
                       {sDone && <Text style={[styles.nowLabel, { color: '#2D9D63' }]}>완료</Text>}
-                      {sMissed && <Text style={[styles.nowLabel, { color: '#8C9BB0' }]}>괜찮아요</Text>}
+                      {sMissed && (gaveupIds.has(s.id)
+                        ? <Text style={[styles.nowLabel, { color: '#C97A2B' }]}>수고했어요</Text>
+                        : <Text style={[styles.nowLabel, { color: '#8C9BB0' }]}>괜찮아요</Text>)}
                     </View>
                   </View>
                 );
@@ -990,16 +1123,31 @@ export default function ScheduleScreen({ navigation, route }: Props) {
               : <Text style={styles.notifyEmoji}>{pending ? getEmoji(pending.title) : '📋'}</Text>}
             <Text style={styles.notifyTime}>{pending?.scheduled_time}</Text>
             <Text style={[styles.notifyTitle, { color: theme }]}>{pending ? parseTitle(pending.title).name : ''}</Text>
-            <Text style={styles.notifyMsg}>지금 시작할까요? 😊</Text>
+            <Text style={styles.notifyMsg}>{pending && isInstant(pending.title) ? '했어요? 😊' : '지금 시작할까요? 😊'}</Text>
             <View style={styles.notifyRow}>
-              <TouchableOpacity style={styles.notifyLater} activeOpacity={0.85}
-                onPress={() => pending && handleStartResp(pending, 'later')}>
-                <Text style={styles.notifyLaterText}>조금 있다가요</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.notifyOk, { backgroundColor: theme }]} activeOpacity={0.85}
-                onPress={() => pending && handleStartResp(pending, 'started')}>
-                <Text style={styles.notifyOkText}>시작할게요</Text>
-              </TouchableOpacity>
+              {pending && isInstant(pending.title) ? (
+                <>
+                  <TouchableOpacity style={styles.notifyLater} activeOpacity={0.85}
+                    onPress={() => pending && handleInstantResp(pending, false)}>
+                    <Text style={styles.notifyLaterText}>안 했어요</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.notifyOk, { backgroundColor: theme }]} activeOpacity={0.85}
+                    onPress={() => pending && handleInstantResp(pending, true)}>
+                    <Text style={styles.notifyOkText}>했어요</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <TouchableOpacity style={styles.notifyLater} activeOpacity={0.85}
+                    onPress={() => pending && handleStartResp(pending, 'later')}>
+                    <Text style={styles.notifyLaterText}>조금 있다가요</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.notifyOk, { backgroundColor: theme }]} activeOpacity={0.85}
+                    onPress={() => pending && handleStartResp(pending, 'started')}>
+                    <Text style={styles.notifyOkText}>시작할게요</Text>
+                  </TouchableOpacity>
+                </>
+              )}
             </View>
           </View>
         </View>
@@ -1077,13 +1225,17 @@ export default function ScheduleScreen({ navigation, route }: Props) {
       <Modal visible={!!catchUp} transparent animationType="fade">
         <View style={styles.cuOverlay}>
           <View style={styles.cuCard}>
-            {scheduleImage(catchUp?.title)
-              ? <Image source={scheduleImage(catchUp?.title)!} style={styles.cuImg} />
-              : <Text style={styles.cuEmoji}>{catchUp ? getEmoji(catchUp.title) : '📋'}</Text>}
-            <Text style={styles.cuTitle}>이전에 이거 하셨어요?</Text>
+            <SchedIcon title={catchUp?.title} emoji={catchUp ? getEmoji(catchUp.title) : '📋'} size={88} radius={18} />
+            <Text style={styles.cuTitle}>이 일과 어떻게 됐어요?</Text>
             <Text style={[styles.cuName, { color: theme }]} numberOfLines={2}>
               {catchUp ? `${catchUp.scheduled_time}  ${parseTitle(catchUp.title).name}` : ''}
             </Text>
+            {/* 지금 시각이 그 일과 시간대(시작~종료) 안일 때만 '지금 하고 있어요' */}
+            {catchUp && !!catchUp.end_time && nowTime < catchUp.end_time && (
+              <TouchableOpacity style={[styles.cuBtn, { flex: 0, backgroundColor: theme, alignSelf: 'stretch', marginTop: 10 }]} activeOpacity={0.85} onPress={handleCatchUpStart}>
+                <Text style={styles.cuBtnYesText}>지금 하고 있어요</Text>
+              </TouchableOpacity>
+            )}
             <View style={styles.cuBtns}>
               <TouchableOpacity style={[styles.cuBtn, styles.cuBtnNo]} activeOpacity={0.85} onPress={() => handleCatchUp(false)}>
                 <Text style={styles.cuBtnNoText}>안 했어요</Text>

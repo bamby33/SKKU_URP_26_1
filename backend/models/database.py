@@ -190,6 +190,19 @@ class ScheduleTransition(Base):
     log_date = Column(DateTime, default=datetime.utcnow)
 
 
+class SuggestionLog(Base):
+    """AI 스케줄 추천 표시/수락 기록 — 연구 Q3 'AI 추천 수락률' 측정용.
+    action='shown'(제안 표시) vs 'accepted'(수락 적용). 수락률 = accepted ÷ shown."""
+    __tablename__ = "suggestion_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    suggestion_type = Column(String, nullable=False)    # shorten | rest | reduce
+    schedule_id = Column(Integer, nullable=True)         # 대상 일과 (rest 등은 없을 수 있음)
+    action = Column(String, nullable=False)              # shown | accepted
+    log_date = Column(DateTime, default=datetime.utcnow)
+
+
 class GuardianNotification(Base):
     """보호자가 일과 수정 시 당사자에게 전달되는 알림"""
     __tablename__ = "guardian_notifications"

@@ -16,6 +16,7 @@ import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
 import { api } from '../../api/client';
 import { SchedIcon } from '../../components/SchedIcon';
+import { scheduleColor } from '../../utils/scheduleImage';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'WeekScheduleEdit'>;
@@ -29,7 +30,7 @@ const GRID_W = SW - PAD * 2;
 const DAY_COL = (GRID_W - TIME_W) / 7;
 const SLOT_H = 22;
 const START_H = 6;
-const TOTAL = 32; // 06:00 ~ 22:00
+const TOTAL = 36; // 06:00 ~ 24:00
 
 const DAY_LABELS = ['월', '화', '수', '목', '금', '토', '일'];
 
@@ -95,9 +96,12 @@ function schedulesToBlocks(schedules: ApiSchedule[]): Block[] {
   const blocks: Block[] = [];
   for (const s of schedules) {
     const { emoji, name } = parseTitle(s.title);
-    const color = EMOJI_COLOR_MAP[emoji] ?? '#4CAF7D';
+    // 취침은 이모지/저장색이 제각각이어도 항상 같은 색·다음날 기상까지로 통일 (데이터가 꼬여도 일관 표시)
+    const bedtime = /취침|수면|자기|잠자기|잠자|잠들/.test(name) && !name.includes('낮잠');
+    const instant = /기상|일어나|복용|투약|출근|등교|등원|퇴근|하교|하원|세면|양치|씻/.test(name);
+    const color = scheduleColor(s.title);   // 같은 일과는 항상 같은 색
     const startSlot = toSlot(s.scheduled_time);
-    const endSlot = Math.min(startSlot + 2, TOTAL);
+    const endSlot = bedtime ? TOTAL : instant ? Math.min(startSlot + 1, TOTAL) : Math.min(startSlot + 2, TOTAL);
     for (const dayStr of s.days_of_week.split(',')) {
       const day = parseInt(dayStr.trim(), 10);
       if (isNaN(day)) continue;
@@ -194,7 +198,7 @@ export default function WeekScheduleEditScreen({ navigation }: Props) {
     setBlocks(p => [...p, {
       id: nid(), day: dropDay,
       startSlot: ss, endSlot: es,
-      name, emoji: dropModal.item.emoji, color: dropModal.item.color,
+      name, emoji: dropModal.item.emoji, color: scheduleColor(name),
     }]);
     setDropModal(null);
   };

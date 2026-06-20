@@ -9,8 +9,9 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from openai import OpenAI
 from dotenv import load_dotenv
-from models.database import get_db, User, Schedule, ScheduleLog, ScheduleStatus, BehaviorLog, FeedbackStage
+from models.database import get_db, User, Schedule, ScheduleLog, ScheduleStatus, BehaviorLog, FeedbackStage, SuggestionLog
 from datetime import datetime, timedelta
+from timeutil import kst_today_start, kst_now
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -20,6 +21,30 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 
 # ── 다음날 최적화 제안 (보호자 승인 방식) ──────────────────────────────────────
 
+def _log_suggestions(user_id: int, items: list, action: str, db: Session):
+    """AI 추천 표시/수락 기록 (Q3 수락률). 'shown'은 같은 날 (유형,일과) 중복 제거."""
+    today0 = kst_today_start()
+    existing = set()
+    if action == "shown":
+        rows = db.query(SuggestionLog).filter(
+            SuggestionLog.user_id == user_id,
+            SuggestionLog.action == "shown",
+            SuggestionLog.log_date >= today0,
+        ).all()
+        existing = {(r.suggestion_type, r.schedule_id) for r in rows}
+    for it in items:
+        stype = it.get("type")
+        sids = it.get("schedule_ids") or [None]
+        for sid in sids:
+            if action == "shown" and (stype, sid) in existing:
+                continue
+            db.add(SuggestionLog(user_id=user_id, suggestion_type=stype,
+                                 schedule_id=sid, action=action))
+            if action == "shown":
+                existing.add((stype, sid))
+    db.commit()
+
+
 @router.get("/next-day-suggestions/{user_id}")
 def get_next_day_suggestions(user_id: int, db: Session = Depends(get_db)):
     """내일 일과 조정 제안 — LLM 판단(행동·사유 기반) + 규칙 기반 병합. AI 우선·중복 제거."""
@@ -28,6 +53,18 @@ def get_next_day_suggestions(user_id: int, db: Session = Depends(get_db)):
     rules = next_day_suggestions(user_id, db)
     seen = {(a["type"], tuple(a.get("schedule_ids", []))) for a in ai}
     merged = ai + [r for r in rules if (r["type"], tuple(r.get("schedule_ids", []))) not in seen]
+
+    # ⚠️ 내일 실제 활성 일과에 존재하는 대상만 제안 — 없는 일과(예: 비활성/오늘 요일 아님) 조정·빼기 방지
+    tdow = str((kst_now().weekday() + 1) % 7)
+    tomorrow_ids = {
+        s.id for s in db.query(Schedule).filter(Schedule.user_id == user_id, Schedule.is_active == True).all()
+        if tdow in s.days_of_week.split(",")
+    }
+    merged = [m for m in merged if all(sid in tomorrow_ids for sid in (m.get("schedule_ids") or []))]
+    try:
+        _log_suggestions(user_id, merged, "shown", db)   # 제안 표시 기록(Q3 분모)
+    except Exception as e:
+        logger.warning(f"[SuggestionLog] shown 기록 실패 user={user_id}: {e}")
     return {"suggestions": merged}
 
 
@@ -41,6 +78,17 @@ def apply_shorten_suggestion(data: ApplyShortenRequest, db: Session = Depends(ge
     """시간 단축 제안 적용 — 해당 일과 end_time 변경."""
     from services.optimize import apply_shorten
     n = apply_shorten(data.schedule_ids, data.new_end_time, db)
+    try:  # 수락 기록(Q3 분자)
+        uid = None
+        if data.schedule_ids:
+            sc = db.query(Schedule).filter(Schedule.id == data.schedule_ids[0]).first()
+            uid = sc.user_id if sc else None
+        if uid:
+            for sid in data.schedule_ids:
+                db.add(SuggestionLog(user_id=uid, suggestion_type="shorten", schedule_id=sid, action="accepted"))
+            db.commit()
+    except Exception as e:
+        logger.warning(f"[SuggestionLog] shorten accepted 기록 실패: {e}")
     return {"ok": True, "updated": n}
 
 
@@ -56,7 +104,37 @@ def apply_rest_suggestion(data: ApplyRestRequest, db: Session = Depends(get_db))
     """휴식 자동 삽입 제안 적용 — rest 일과 생성."""
     from services.optimize import apply_rest
     n = apply_rest(data.user_id, data.rest_start, data.rest_end, data.days_of_week, db)
+    try:  # 수락 기록(Q3 분자)
+        db.add(SuggestionLog(user_id=data.user_id, suggestion_type="rest", schedule_id=None, action="accepted"))
+        db.commit()
+    except Exception as e:
+        logger.warning(f"[SuggestionLog] rest accepted 기록 실패: {e}")
     return {"ok": True, "created": n}
+
+
+class ApplyReduceRequest(BaseModel):
+    schedule_ids: list[int]
+
+
+@router.post("/apply-reduce")
+def apply_reduce_suggestion(data: ApplyReduceRequest, db: Session = Depends(get_db)):
+    """일과 줄이기 제안 적용 — 해당 일과 비활성화(소프트 삭제, 과거 로그 보존)."""
+    uid, n = None, 0
+    for sid in data.schedule_ids:
+        s = db.query(Schedule).filter(Schedule.id == sid).first()
+        if s:
+            s.is_active = False
+            uid = s.user_id
+            n += 1
+    db.commit()
+    if uid:
+        try:  # 수락 기록(Q3 분자)
+            for sid in data.schedule_ids:
+                db.add(SuggestionLog(user_id=uid, suggestion_type="reduce", schedule_id=sid, action="accepted"))
+            db.commit()
+        except Exception as e:
+            logger.warning(f"[SuggestionLog] reduce accepted 기록 실패: {e}")
+    return {"ok": True, "deactivated": n}
 
 
 START_H = 6
@@ -246,7 +324,8 @@ JSON 배열로만 답하라. 각 원소:
             continue
         cat = s.category or "routine"
         if typ == "time_adjust":
-            if cat in ("fixed", "sleep"):
+            from services.category import is_instant
+            if cat in ("fixed", "sleep") or is_instant(s.title):  # 순간 일과는 단축할 시간이 없음
                 continue
             ne = it.get("new_end_time")
             if not (isinstance(ne, str) and ":" in ne) or not s.end_time:

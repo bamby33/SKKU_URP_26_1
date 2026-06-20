@@ -4,7 +4,8 @@
  * - DB에서 불러와 편집 → 저장 시 기존 일과 삭제 후 재생성 (즉시 반영)
  * - 보호자가 저장하면 당사자에게 알림 생성
  */
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Modal, Alert,
   Dimensions, PanResponder, ActivityIndicator,
@@ -18,15 +19,20 @@ import { colors } from '../../theme/colors';
 import { api } from '../../api/client';
 import TimePickerField from '../../components/TimePickerField';
 import { SchedIcon } from '../../components/SchedIcon';
+import { scheduleColor } from '../../utils/scheduleImage';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'ScheduleEdit'>;
 };
 
 const START_H = 6;
-const TOTAL   = 32; // 06:00 ~ 22:00
+const TOTAL   = 36; // 06:00 ~ 24:00 (취침을 밤 늦게도 둘 수 있게 — 끝 시간은 안 받고 다음날 기상까지 자동)
 const DAY_LABELS = ['월', '화', '수', '목', '금', '토', '일'];
 const todayIdx = () => (new Date().getDay() + 6) % 7;
+// 밤 취침(낮잠 제외) — 끝 시간을 받지 않고 '기상까지' 자동 처리
+const isBedtime = (name: string) => /취침|수면|자기|잠자기|잠자|잠들/.test(name || '') && !(name || '').includes('낮잠');
+// 순간(점) 일과 — 끝 시간 없이 그 시각에 하는 일과 (기상·약복용·세면·양치·출퇴근·등하교)
+const isInstant = (name: string) => /기상|일어나|복용|투약|출근|등교|등원|퇴근|하교|하원|세면|양치|씻/.test(name || '');
 
 // 주간 전체 보기 그리드 치수
 const { width: SW } = Dimensions.get('window');
@@ -113,9 +119,11 @@ function schedulesToBlocks(schedules: ApiSchedule[]): Block[] {
   const out: Block[] = [];
   for (const s of schedules) {
     const { emoji, name } = parseTitle(s.title);
-    const color = s.color || EMOJI_COLOR_MAP[emoji] || '#4CAF7D';
+    // 같은 일과는 항상 같은 색(scheduleColor). 취침은 하루 끝까지, 순간 일과는 작은 블록.
+    const bed = isBedtime(name);
+    const color = scheduleColor(s.title);
     const ss = clamp(toSlot(s.scheduled_time), 0, TOTAL - 1);
-    const es = s.end_time ? clamp(toSlot(s.end_time), ss + 1, TOTAL) : Math.min(ss + 2, TOTAL);
+    const es = bed ? TOTAL : isInstant(name) ? Math.min(ss + 1, TOTAL) : (s.end_time ? clamp(toSlot(s.end_time), ss + 1, TOTAL) : Math.min(ss + 2, TOTAL));
     const startTime = s.scheduled_time;
     const endTime = s.end_time || toTime(es);
     for (const d of s.days_of_week.split(',')) {
@@ -159,27 +167,26 @@ export default function ScheduleEditScreen({ navigation }: Props) {
   const [editStart, setEditStart] = useState('');
   const [editEnd,   setEditEnd]   = useState('');
 
-  // ── DB 로드 ──
-  useEffect(() => {
-    (async () => {
-      try {
-        const pairs = await AsyncStorage.multiGet(['user_id', 'role']);
-        const uidStr = pairs[0][1];
-        setIsGuardian(pairs[1][1] === 'guardian');
-        if (!uidStr) { setLoading(false); return; }
-        const id = Number(uidStr);
-        userIdRef.current = id;
-        const res = await api.get(`/schedules/user/${id}`);
-        const all: ApiSchedule[] = res.data;
-        existingIdsRef.current = all.map(s => s.id);
-        setBlocks(schedulesToBlocks(all));
-      } catch {
-        Alert.alert('오류', '일과를 불러오지 못했어요.');
-      } finally {
-        setLoading(false);
-      }
-    })();
+  // ── DB 로드 (포커스마다 재요청 → AI 적용·다른 화면 변경이 실시간 반영) ──
+  const load = useCallback(async () => {
+    try {
+      const pairs = await AsyncStorage.multiGet(['user_id', 'role']);
+      const uidStr = pairs[0][1];
+      setIsGuardian(pairs[1][1] === 'guardian');
+      if (!uidStr) { setLoading(false); return; }
+      const id = Number(uidStr);
+      userIdRef.current = id;
+      const res = await api.get(`/schedules/user/${id}`);
+      const all: ApiSchedule[] = res.data;
+      existingIdsRef.current = all.map(s => s.id);
+      setBlocks(schedulesToBlocks(all));
+    } catch {
+      Alert.alert('오류', '일과를 불러오지 못했어요.');
+    } finally {
+      setLoading(false);
+    }
   }, []);
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const dayBlocks = blocks
     .filter(b => b.day === selectedDay)
@@ -203,16 +210,23 @@ export default function ScheduleEditScreen({ navigation }: Props) {
     setAddStep('detail');   // 활동 선택 → 상세 입력 페이지로
   };
   const confirmAdd = () => {
-    if (toMin(addStart) >= toMin(addEnd)) { Alert.alert('시간 오류', '종료 시간이 시작 시간보다 늦어야 해요.'); return; }
-    const ss = toSlot(addStart);
-    const es = Math.max(ss + 1, toSlot(addEnd));
     const name = addName.trim();
     if (!name) { Alert.alert('이름 필요', '일과 이름을 입력해주세요.'); return; }
+    const bedtime = isBedtime(name);
+    const instant = isInstant(name);
+    if (!bedtime && !instant && toMin(addStart) >= toMin(addEnd)) { Alert.alert('시간 오류', '종료 시간이 시작 시간보다 늦어야 해요.'); return; }
+    // 취침은 하루 끝(기상까지)까지, 순간 일과는 그 시각 점(작은 블록) — 둘 다 끝 시간 안 받음
+    const endT = bedtime ? minToTime(START_H * 60 + TOTAL * 30) : instant ? minToTime(toMin(addStart) + 30) : addEnd;
+    const ss = toSlot(addStart);
+    const es = Math.max(ss + 1, toSlot(endT));
     const days = addDays.map((on, i) => on ? i : -1).filter(i => i >= 0);
     if (!days.length) { Alert.alert('요일 선택', '요일을 하나 이상 선택해주세요.'); return; }
-    const filtered = blocks.filter(b => !(days.includes(b.day) && toMin(b.startTime) < toMin(addEnd) && toMin(b.endTime) > toMin(addStart)));
+    // 취침은 하루에 하나만 — 같은 요일의 기존 취침은 제거(시각 안 겹쳐도). 그 외엔 시간 겹치는 것만 제거.
+    const filtered = blocks.filter(b => bedtime
+      ? !(days.includes(b.day) && isBedtime(b.name))
+      : !(days.includes(b.day) && toMin(b.startTime) < toMin(endT) && toMin(b.endTime) > toMin(addStart)));
     const created = days.map(day => ({
-      id: nid(), day, startSlot: ss, endSlot: es, startTime: addStart, endTime: addEnd, name, emoji: addItem.emoji, color: addItem.color,
+      id: nid(), day, startSlot: ss, endSlot: es, startTime: addStart, endTime: endT, name, emoji: addItem.emoji, color: scheduleColor(name),
     }));
     const next = [...filtered, ...created];
     setBlocks(next);
@@ -254,12 +268,16 @@ export default function ScheduleEditScreen({ navigation }: Props) {
   const openEdit = (b: Block) => { setEditBlock(b); setEditName(b.name); setEditStart(b.startTime); setEditEnd(b.endTime); };
   const confirmEdit = () => {
     if (!editBlock) return;
-    if (toMin(editStart) >= toMin(editEnd)) { Alert.alert('시간 오류', '종료 시간이 시작 시간보다 늦어야 해요.'); return; }
+    const bedtime = isBedtime(editName);
+    const instant = isInstant(editName);
     if (!editName.trim()) { Alert.alert('이름 필요', '일과 이름을 입력해주세요.'); return; }
+    if (!bedtime && !instant && toMin(editStart) >= toMin(editEnd)) { Alert.alert('시간 오류', '종료 시간이 시작 시간보다 늦어야 해요.'); return; }
+    // 취침=하루 끝까지, 순간 일과=그 시각 점 — 둘 다 끝 시간 안 받음
+    const endT = bedtime ? minToTime(START_H * 60 + TOTAL * 30) : instant ? minToTime(toMin(editStart) + 30) : editEnd;
     const ss = toSlot(editStart);
-    const es = Math.max(ss + 1, toSlot(editEnd));
+    const es = Math.max(ss + 1, toSlot(endT));
     const next = blocks.map(b => b.id === editBlock.id
-      ? { ...b, name: editName.trim(), startSlot: ss, endSlot: es, startTime: editStart, endTime: editEnd } : b);
+      ? { ...b, name: editName.trim(), startSlot: ss, endSlot: es, startTime: editStart, endTime: endT } : b);
     setBlocks(next);
     setEditBlock(null);
     doSave(next); // 바로 저장
@@ -416,7 +434,7 @@ export default function ScheduleEditScreen({ navigation }: Props) {
                     <SchedIcon title={b.name} emoji={b.emoji} size={88} radius={16} />
                     <View style={styles.cardBody}>
                       <Text style={styles.cardName} numberOfLines={1}>{b.name}</Text>
-                      <Text style={styles.cardTime}>{b.startTime} ~ {b.endTime}</Text>
+                      <Text style={styles.cardTime}>{isBedtime(b.name) ? `${b.startTime} ~ 기상까지` : isInstant(b.name) ? b.startTime : `${b.startTime} ~ ${b.endTime}`}</Text>
                     </View>
                     <Text style={styles.cardEdit}>수정 ›</Text>
                   </TouchableOpacity>
@@ -468,11 +486,19 @@ export default function ScheduleEditScreen({ navigation }: Props) {
                 </View>
                 <Text style={styles.modalLabel}>일과 이름</Text>
                 <TextInput style={styles.modalInput} value={addName} onChangeText={setAddName} placeholder="일과 이름을 입력해주세요" placeholderTextColor="#bbb" />
-                <Text style={styles.modalLabel}>시간</Text>
+                <Text style={styles.modalLabel}>{isBedtime(addName) ? '취침 시각' : isInstant(addName) ? '시각' : '시간'}</Text>
                 <View style={styles.timeRow}>
                   <TimePickerField value={addStart} onChange={(v) => { setAddStart(v); if (toMin(v) >= toMin(addEnd)) setAddEnd(minToTime(toMin(v) + 60)); }} />
-                  <Text style={styles.timeSep}>~</Text>
-                  <TimePickerField value={addEnd} onChange={setAddEnd} />
+                  {isBedtime(addName) ? (
+                    <Text style={[styles.timeSep, { color: '#94A3B8' }]}>~ 기상까지(자동)</Text>
+                  ) : isInstant(addName) ? (
+                    <Text style={[styles.timeSep, { color: '#94A3B8' }]}>에 하기</Text>
+                  ) : (
+                    <>
+                      <Text style={styles.timeSep}>~</Text>
+                      <TimePickerField value={addEnd} onChange={setAddEnd} />
+                    </>
+                  )}
                 </View>
                 <Text style={styles.modalLabel}>요일 선택</Text>
                 <View style={styles.dayRow}>
@@ -507,11 +533,19 @@ export default function ScheduleEditScreen({ navigation }: Props) {
             </View>
             <Text style={styles.modalLabel}>일과 이름</Text>
             <TextInput style={styles.modalInput} value={editName} onChangeText={setEditName} placeholder="일과 이름" placeholderTextColor="#bbb" />
-            <Text style={styles.modalLabel}>시간</Text>
+            <Text style={styles.modalLabel}>{isBedtime(editName) ? '취침 시각' : isInstant(editName) ? '시각' : '시간'}</Text>
             <View style={styles.timeRow}>
               <TimePickerField value={editStart} onChange={(v) => { setEditStart(v); if (toMin(v) >= toMin(editEnd)) setEditEnd(minToTime(toMin(v) + 60)); }} />
-              <Text style={styles.timeSep}>~</Text>
-              <TimePickerField value={editEnd} onChange={setEditEnd} />
+              {isBedtime(editName) ? (
+                <Text style={[styles.timeSep, { color: '#94A3B8' }]}>~ 기상까지(자동)</Text>
+              ) : isInstant(editName) ? (
+                <Text style={[styles.timeSep, { color: '#94A3B8' }]}>에 하기</Text>
+              ) : (
+                <>
+                  <Text style={styles.timeSep}>~</Text>
+                  <TimePickerField value={editEnd} onChange={setEditEnd} />
+                </>
+              )}
             </View>
             <View style={styles.modalBtns}>
               <TouchableOpacity onPress={deleteBlock} style={styles.deleteBtn}><Text style={styles.deleteText}>삭제</Text></TouchableOpacity>

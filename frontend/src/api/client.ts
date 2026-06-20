@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const BASE_URL = 'https://recorders-rico-requiring-discusses.trycloudflare.com';
+const BASE_URL = 'https://api.routyskku.org';   // Cloudflare named tunnel — 고정 주소(재시작해도 안 바뀜)
 
 export const api = axios.create({
   baseURL: BASE_URL,

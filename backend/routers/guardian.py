@@ -101,12 +101,18 @@ def get_dashboard(user_id: int, db: Session = Depends(get_db)):
     if current:
         from services.achievement import latest_log_map
         _cur_log = latest_log_map([s.id for s in today_schedules], db).get(current.id)
-        if _cur_log and _cur_log.status == ScheduleStatus.ACHIEVED:
+        if _cur_log and _cur_log.early_stop:
+            status = "gaveup"   # 중도포기 (시작했다 그만둠) — ACHIEVED 여부보다 우선
+        elif _cur_log and _cur_log.status == ScheduleStatus.ACHIEVED:
             status = "done"
+        elif _cur_log and _cur_log.status == ScheduleStatus.MISSED and (_cur_log.refusal_count or 0) > 0:
+            status = "refused"  # 실시간 거절
         elif _cur_log and _cur_log.status == ScheduleStatus.MISSED:
-            status = "missed"
+            status = "missed"   # 단순 미달성
         elif _cur_log and (_cur_log.started_at is not None or _cur_log.response_type == "started"):
             status = "in_progress"
+        elif any(k in current.title for k in SLEEP_KW) and "낮잠" not in current.title:
+            status = "sleeping"  # 취침은 시작/완료 개념이 없음 — 시간이 되면 '취침 중'
         else:
             status = "todo"
         current_schedule = {
@@ -240,6 +246,7 @@ def get_dashboard(user_id: int, db: Session = Depends(get_db)):
             "schedule_id": s.id, "title": s.title, "time": s.scheduled_time, "end": s.end_time,
             "status": (log.status if log else "pending"),
             "early_stop": (bool(log.early_stop) if log else False),
+            "refusal_count": ((log.refusal_count or 0) if log else 0),  # >0 = 실시간 거절, 0 = 단순 미달성
             "duration": (log.actual_duration_min if log else None),
             "note": (log.note if log else None),
             "ai_summary": (log.ai_summary if log else None),

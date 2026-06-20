@@ -30,7 +30,9 @@ export default function AppFrame({
     Alert.alert('로그아웃', '로그아웃 할까요?', [
       { text: '아니요', style: 'cancel' },
       { text: '네', style: 'destructive', onPress: async () => {
-        await AsyncStorage.clear();
+        // 오늘 '한 번 봤음' 플래그(자기평가·돌아보기)는 보존하고 인증/기타만 제거
+        const keys = await AsyncStorage.getAllKeys();
+        await AsyncStorage.multiRemove(keys.filter(k => !k.startsWith('selfAssess:') && !k.startsWith('recapSeen:')));
         navigation.reset({ index: 0, routes: [{ name: 'Auth' }] });
       } },
     ]);
@@ -44,6 +46,7 @@ export default function AppFrame({
   const isG = r === 'guardian';
   const items: BarItem[] = isG ? [
     { key: 'home', label: '홈', icon: 'home', active: active === 'home', onPress: () => navigation.navigate('GuardianReport') },
+    { key: 'recap', label: '돌아보기', icon: 'sparkles-outline', active: active === 'recap', onPress: () => navigation.navigate('GuardianRecap') },
     { key: 'edit', label: '일과 편집', icon: 'create-outline', active: active === 'edit', onPress: () => navigation.navigate('ScheduleEdit') },
     { key: 'logout', label: '로그아웃', icon: 'log-out-outline', danger: true, onPress: logout },
   ] : [

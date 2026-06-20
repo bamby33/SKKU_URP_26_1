@@ -15,6 +15,7 @@ import { RootStackParamList } from '../../navigation/AppNavigator';
 import { colors } from '../../theme/colors';
 import TimePickerField from '../../components/TimePickerField';
 import { SchedIcon } from '../../components/SchedIcon';
+import { scheduleColor } from '../../utils/scheduleImage';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'ScheduleSetup'>;
@@ -22,8 +23,12 @@ type Props = {
 };
 
 const START_H = 6;
-const TOTAL   = 32; // 06:00 ~ 22:00
+const TOTAL   = 36; // 06:00 ~ 24:00
 const DAY_LABELS = ['월', '화', '수', '목', '금', '토', '일'];
+// 밤 취침(낮잠 제외) — 끝 시간을 받지 않고 '기상까지' 자동 처리
+const isBedtime = (name: string) => /취침|수면|자기|잠자기|잠자|잠들/.test(name || '') && !(name || '').includes('낮잠');
+// 순간(점) 일과 — 끝 시간 없이 그 시각에 (기상·약복용·세면·양치·출퇴근·등하교)
+const isInstant = (name: string) => /기상|일어나|복용|투약|출근|등교|등원|퇴근|하교|하원|세면|양치|씻/.test(name || '');
 
 // 주간 전체 보기 그리드 치수
 const { width: SW } = Dimensions.get('window');
@@ -89,7 +94,7 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
   const initBlocks: Block[] = (route.params.schedules ?? []).map(s => ({
     id: nid(), day: s.day, startSlot: s.startSlot, endSlot: s.endSlot,
     startTime: s.startTime ?? toTime(s.startSlot), endTime: s.endTime ?? toTime(s.endSlot),
-    name: s.activity, emoji: s.emoji, color: s.color,
+    name: s.activity, emoji: s.emoji, color: scheduleColor(s.activity),
   }));
 
   const [blocks, setBlocks]         = useState<Block[]>(initBlocks);
@@ -143,20 +148,27 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
   };
 
   const confirmAdd = () => {
-    if (toMin(addStart) >= toMin(addEnd)) { Alert.alert('시간 오류', '종료 시간이 시작 시간보다 늦어야 해요.'); return; }
-    const ss = toSlot(addStart);
-    const es = Math.max(ss + 1, toSlot(addEnd));
     const name = addName.trim();
     if (!name) { Alert.alert('이름 필요', '일과 이름을 입력해주세요.'); return; }
+    const bedtime = isBedtime(name);
+    const instant = isInstant(name);
+    if (!bedtime && !instant && toMin(addStart) >= toMin(addEnd)) { Alert.alert('시간 오류', '종료 시간이 시작 시간보다 늦어야 해요.'); return; }
+    // 취침=하루 끝까지, 순간 일과=그 시각 점 — 둘 다 끝 시간 안 받음
+    const endT = bedtime ? minToTime(START_H * 60 + TOTAL * 30) : instant ? minToTime(toMin(addStart) + 30) : addEnd;
+    const ss = toSlot(addStart);
+    const es = Math.max(ss + 1, toSlot(endT));
     const days = addDays.map((on, i) => on ? i : -1).filter(i => i >= 0);
     if (!days.length) { Alert.alert('요일 선택', '요일을 하나 이상 선택해주세요.'); return; }
 
     setBlocks(prev => {
       // 선택 요일에서 겹치는 블록 제거 후 추가 (정확한 시각 기준)
-      const filtered = prev.filter(b => !(days.includes(b.day) && toMin(b.startTime) < toMin(addEnd) && toMin(b.endTime) > toMin(addStart)));
+      // 취침은 하루 하나 — 같은 요일 기존 취침 제거. 그 외엔 시간 겹치는 것만 제거.
+      const filtered = prev.filter(b => bedtime
+        ? !(days.includes(b.day) && isBedtime(b.name))
+        : !(days.includes(b.day) && toMin(b.startTime) < toMin(endT) && toMin(b.endTime) > toMin(addStart)));
       const created = days.map(day => ({
-        id: nid(), day, startSlot: ss, endSlot: es, startTime: addStart, endTime: addEnd,
-        name, emoji: addItem.emoji, color: addItem.color,
+        id: nid(), day, startSlot: ss, endSlot: es, startTime: addStart, endTime: endT,
+        name, emoji: addItem.emoji, color: scheduleColor(name),
       }));
       return [...filtered, ...created];
     });
@@ -208,12 +220,15 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
 
   const confirmEdit = () => {
     if (!editBlock) return;
-    if (toMin(editStart) >= toMin(editEnd)) { Alert.alert('시간 오류', '종료 시간이 시작 시간보다 늦어야 해요.'); return; }
+    const bedtime = isBedtime(editName);
+    const instant = isInstant(editName);
     if (!editName.trim()) { Alert.alert('이름 필요', '일과 이름을 입력해주세요.'); return; }
+    if (!bedtime && !instant && toMin(editStart) >= toMin(editEnd)) { Alert.alert('시간 오류', '종료 시간이 시작 시간보다 늦어야 해요.'); return; }
+    const endT = bedtime ? minToTime(START_H * 60 + TOTAL * 30) : instant ? minToTime(toMin(editStart) + 30) : editEnd;
     const ss = toSlot(editStart);
-    const es = Math.max(ss + 1, toSlot(editEnd));
+    const es = Math.max(ss + 1, toSlot(endT));
     setBlocks(p => p.map(b => b.id === editBlock.id
-      ? { ...b, name: editName.trim(), startSlot: ss, endSlot: es, startTime: editStart, endTime: editEnd }
+      ? { ...b, name: editName.trim(), startSlot: ss, endSlot: es, startTime: editStart, endTime: endT }
       : b));
     setEditBlock(null);
   };
@@ -448,8 +463,16 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
                 <Text style={styles.modalLabel}>시간</Text>
                 <View style={styles.timeRow}>
                   <TimePickerField value={addStart} onChange={(v) => { setAddStart(v); if (toMin(v) >= toMin(addEnd)) setAddEnd(minToTime(toMin(v) + 60)); }} />
-                  <Text style={styles.timeSep}>~</Text>
-                  <TimePickerField value={addEnd} onChange={setAddEnd} />
+                  {isBedtime(addName) ? (
+                    <Text style={[styles.timeSep, { color: '#94A3B8' }]}>~ 기상까지(자동)</Text>
+                  ) : isInstant(addName) ? (
+                    <Text style={[styles.timeSep, { color: '#94A3B8' }]}>에 하기</Text>
+                  ) : (
+                    <>
+                      <Text style={styles.timeSep}>~</Text>
+                      <TimePickerField value={addEnd} onChange={setAddEnd} />
+                    </>
+                  )}
                 </View>
                 <Text style={styles.modalLabel}>요일 선택</Text>
                 <View style={styles.dayRow}>
@@ -496,8 +519,16 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
             <Text style={styles.modalLabel}>시간</Text>
             <View style={styles.timeRow}>
               <TimePickerField value={editStart} onChange={(v) => { setEditStart(v); if (toMin(v) >= toMin(editEnd)) setEditEnd(minToTime(toMin(v) + 60)); }} />
-              <Text style={styles.timeSep}>~</Text>
-              <TimePickerField value={editEnd} onChange={setEditEnd} />
+              {isBedtime(editName) ? (
+                <Text style={[styles.timeSep, { color: '#94A3B8' }]}>~ 기상까지(자동)</Text>
+              ) : isInstant(editName) ? (
+                <Text style={[styles.timeSep, { color: '#94A3B8' }]}>에 하기</Text>
+              ) : (
+                <>
+                  <Text style={styles.timeSep}>~</Text>
+                  <TimePickerField value={editEnd} onChange={setEditEnd} />
+                </>
+              )}
             </View>
 
             <View style={styles.modalBtns}>
