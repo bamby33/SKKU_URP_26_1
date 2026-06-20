@@ -30,6 +30,19 @@ const isBedtime = (name: string) => /취침|수면|자기|잠자기|잠자|잠�
 // 순간(점) 일과 — 끝 시간 없이 그 시각에 (기상·약복용·세면·양치·출퇴근·등하교)
 const isInstant = (name: string) => /기상|일어나|복용|투약|출근|등교|등원|퇴근|하교|하원|세면|양치/.test(name || '');
 
+// 일과 추가 = 고정 일과 입력 폼 (복지관·병원처럼 시간이 정해진 일과)
+const FIXED_SUGGESTIONS = ['복지관', '학교/기관', '병원', '치료', '운동', '산책'];
+const EMOJI_FALLBACK: [RegExp, string][] = [
+  [/기상|일어나/, '🌅'], [/식사|밥|아침|점심|저녁|간식/, '🍚'],
+  [/세면|양치/, '🧼'], [/목욕|샤워|씻/, '🛁'], [/운동|체조/, '🏃'],
+  [/산책/, '🚶'], [/독서|책|공부|숙제|학습|미술|그림/, '📖'], [/약|복용/, '💊'],
+  [/병원|치료|재활/, '🏥'], [/복지관|기관|센터|학교/, '🏫'], [/취침|수면|자기|잠/, '😴'],
+];
+const emojiFor = (name: string): string => {
+  for (const [re, e] of EMOJI_FALLBACK) if (re.test(name || '')) return e;
+  return '📌';
+};
+
 // 주간 전체 보기 그리드 치수
 const { width: SW } = Dimensions.get('window');
 const PAD     = 12;
@@ -111,8 +124,6 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
 
   // 추가 모달
   const [showAdd,   setShowAdd]   = useState(false);
-  const [addStep,   setAddStep]   = useState<'pick' | 'detail'>('pick');
-  const [addItem,   setAddItem]   = useState<PaletteItem>(PALETTE[0]);
   const [addName,   setAddName]   = useState('');
   const [addStart,  setAddStart]  = useState('09:00');
   const [addEnd,    setAddEnd]    = useState('10:00');
@@ -133,18 +144,10 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
     const initDays = Array(7).fill(false);
     initDays[selectedDay] = true;
     setAddDays(initDays);
-    setAddItem(PALETTE[0]);
-    setAddName(PALETTE[0].label);
+    setAddName('');
     setAddStart('09:00');
     setAddEnd('10:00');
-    setAddStep('pick');
     setShowAdd(true);
-  };
-
-  const pickPalette = (item: PaletteItem) => {
-    setAddItem(item);
-    setAddName(item.label === '직접 입력' ? '' : item.label);
-    setAddStep('detail');
   };
 
   const confirmAdd = () => {
@@ -168,7 +171,7 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
         : !(days.includes(b.day) && toMin(b.startTime) < toMin(endT) && toMin(b.endTime) > toMin(addStart)));
       const created = days.map(day => ({
         id: nid(), day, startSlot: ss, endSlot: es, startTime: addStart, endTime: endT,
-        name, emoji: addItem.emoji, color: scheduleColor(name),
+        name, emoji: emojiFor(name), color: scheduleColor(name),
       }));
       return [...filtered, ...created];
     });
@@ -186,7 +189,6 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
     const initDays = Array(7).fill(false);
     initDays[colIdx] = true;
     setAddDays(initDays);
-    setAddItem(item);
     setAddName(item.label === '직접 입력' ? '' : item.label);
     setAddStart(toTime(slotIdx));
     setAddEnd(toTime(Math.min(slotIdx + 2, TOTAL)));
@@ -431,74 +433,59 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
       <Modal visible={showAdd} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
-            {addStep === 'pick' ? (
-              <>
-                <Text style={styles.modalTitle}>어떤 일과를 추가할까요?</Text>
-                <Text style={styles.modalSubtle}>활동을 선택하면 다음에서 시간·요일을 정해요</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pickScroll}>
-                  {PALETTE.map((p, i) => (
-                    <TouchableOpacity key={i} style={styles.pickCard} activeOpacity={0.8} onPress={() => pickPalette(p)}>
-                      <SchedIcon title={p.label === '직접 입력' ? '' : p.label} emoji={p.emoji} size={PICK_IMG} radius={20} />
-                      <Text style={styles.pickCardLabel} numberOfLines={1}>{p.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-                <View style={styles.modalBtns}>
-                  <TouchableOpacity onPress={() => setShowAdd(false)} style={[styles.cancelBtn, { flex: 1 }]}><Text style={styles.cancelText}>취소</Text></TouchableOpacity>
-                </View>
-              </>
-            ) : (
-              <>
-                <View style={styles.detailHead}>
-                  <TouchableOpacity onPress={() => setAddStep('pick')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                    <Text style={styles.detailBack}>‹ 활동 변경</Text>
-                  </TouchableOpacity>
-                </View>
-                <View style={styles.detailSel}>
-                  <SchedIcon title={addItem.label === '직접 입력' ? '' : addItem.label} emoji={addItem.emoji} size={64} radius={14} />
-                  <Text style={styles.detailSelName}>{addItem.label === '직접 입력' ? '직접 입력' : addItem.label}</Text>
-                </View>
-                <Text style={styles.modalLabel}>일과 이름</Text>
-                <TextInput style={styles.modalInput} value={addName} onChangeText={setAddName} placeholder="일과 이름을 입력해주세요" placeholderTextColor="#bbb" />
-                <Text style={styles.modalLabel}>시간</Text>
-                <View style={styles.timeRow}>
-                  <TimePickerField value={addStart} onChange={(v) => { setAddStart(v); if (toMin(v) >= toMin(addEnd)) setAddEnd(minToTime(toMin(v) + 60)); }} />
-                  {isBedtime(addName) ? (
-                    <Text style={[styles.timeSep, { color: '#94A3B8' }]}>~ 기상까지(자동)</Text>
-                  ) : isInstant(addName) ? (
-                    <Text style={[styles.timeSep, { color: '#94A3B8' }]}>에 하기</Text>
-                  ) : (
-                    <>
-                      <Text style={styles.timeSep}>~</Text>
-                      <TimePickerField value={addEnd} onChange={setAddEnd} />
-                    </>
-                  )}
-                </View>
-                <Text style={styles.modalLabel}>요일 선택</Text>
-                <View style={styles.dayRow}>
-                  {DAY_LABELS.map((d, i) => (
-                    <TouchableOpacity key={i}
-                      style={[styles.modalDayBtn, addDays[i] && styles.modalDayBtnOn]}
-                      onPress={() => toggleAddDay(i)}>
-                      <Text style={[styles.modalDayText, addDays[i] && { color: '#fff' }]}>{d}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <View style={styles.presetRow}>
-                  <TouchableOpacity style={styles.presetBtn} onPress={() => setAddDayPreset([0,1,2,3,4])}><Text style={styles.presetText}>주중</Text></TouchableOpacity>
-                  <TouchableOpacity style={styles.presetBtn} onPress={() => setAddDayPreset([5,6])}><Text style={styles.presetText}>주말</Text></TouchableOpacity>
-                  <TouchableOpacity style={styles.presetBtn} onPress={() => setAddDayPreset([0,1,2,3,4,5,6])}><Text style={styles.presetText}>매일</Text></TouchableOpacity>
-                </View>
-                <View style={styles.modalBtns}>
-                  <TouchableOpacity onPress={() => setShowAdd(false)} style={styles.cancelBtn}>
-                    <Text style={styles.cancelText}>취소</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={confirmAdd} style={styles.confirmBtn}>
-                    <Text style={styles.confirmText}>추가하기</Text>
-                  </TouchableOpacity>
-                </View>
-              </>
-            )}
+            <Text style={styles.modalTitle}>일과 추가</Text>
+            <Text style={styles.modalSubtle}>복지관·병원처럼 시간이 정해진 일과를 추가하세요</Text>
+
+            {/* 추천 일과 */}
+            <View style={styles.sugRow}>
+              {FIXED_SUGGESTIONS.map(s => (
+                <TouchableOpacity key={s}
+                  style={[styles.sugChip, addName === s && styles.sugChipOn]}
+                  onPress={() => setAddName(s)}>
+                  <Text style={[styles.sugText, addName === s && styles.sugTextOn]}>{s}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.modalLabel}>일과 이름</Text>
+            <TextInput style={styles.modalInput} value={addName} onChangeText={setAddName} placeholder="일과 이름을 입력해주세요" placeholderTextColor="#bbb" />
+            <Text style={styles.modalLabel}>시간</Text>
+            <View style={styles.timeRow}>
+              <TimePickerField value={addStart} onChange={(v) => { setAddStart(v); if (toMin(v) >= toMin(addEnd)) setAddEnd(minToTime(toMin(v) + 60)); }} />
+              {isBedtime(addName) ? (
+                <Text style={[styles.timeSep, { color: '#94A3B8' }]}>~ 기상까지(자동)</Text>
+              ) : isInstant(addName) ? (
+                <Text style={[styles.timeSep, { color: '#94A3B8' }]}>에 하기</Text>
+              ) : (
+                <>
+                  <Text style={styles.timeSep}>~</Text>
+                  <TimePickerField value={addEnd} onChange={setAddEnd} />
+                </>
+              )}
+            </View>
+            <Text style={styles.modalLabel}>요일 선택</Text>
+            <View style={styles.dayRow}>
+              {DAY_LABELS.map((d, i) => (
+                <TouchableOpacity key={i}
+                  style={[styles.modalDayBtn, addDays[i] && styles.modalDayBtnOn]}
+                  onPress={() => toggleAddDay(i)}>
+                  <Text style={[styles.modalDayText, addDays[i] && { color: '#fff' }]}>{d}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <View style={styles.presetRow}>
+              <TouchableOpacity style={styles.presetBtn} onPress={() => setAddDayPreset([0,1,2,3,4])}><Text style={styles.presetText}>주중</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.presetBtn} onPress={() => setAddDayPreset([5,6])}><Text style={styles.presetText}>주말</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.presetBtn} onPress={() => setAddDayPreset([0,1,2,3,4,5,6])}><Text style={styles.presetText}>매일</Text></TouchableOpacity>
+            </View>
+            <View style={styles.modalBtns}>
+              <TouchableOpacity onPress={() => setShowAdd(false)} style={styles.cancelBtn}>
+                <Text style={styles.cancelText}>취소</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={confirmAdd} style={styles.confirmBtn}>
+                <Text style={styles.confirmText}>추가하기</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -557,8 +544,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16, paddingVertical: 10,
     backgroundColor: colors.white, borderBottomWidth: 1, borderBottomColor: colors.border,
   },
-  backBtn:  { paddingHorizontal: 14, paddingVertical: 8, backgroundColor: colors.primaryBg, borderRadius: 20 },
-  backText: { fontSize: 14, color: colors.primary, fontWeight: '800' },
+  backBtn:  { paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 20 },
+  backText: { fontSize: 15, color: colors.primary, fontWeight: '800' },
   title:    { fontSize: 16, fontWeight: '900', color: '#1E293B' },
   doneBtn:     { backgroundColor: '#fff', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1.5, borderColor: '#E2E8F0' },
   doneBtnText: { color: colors.primary, fontWeight: '800', fontSize: 14 },
@@ -649,6 +636,11 @@ const styles = StyleSheet.create({
     alignSelf: 'center', width: '88%',
   },
   modalTitle: { fontSize: 18, fontWeight: '900', color: colors.primary, marginBottom: 16 },
+  sugRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 6 },
+  sugChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0' },
+  sugChipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
+  sugText: { fontSize: 12, fontWeight: '600', color: '#64748B' },
+  sugTextOn: { color: '#fff' },
   modalLabel: { fontSize: 13, fontWeight: '800', color: '#475569', marginTop: 4, marginBottom: 8 },
   modalInput: {
     backgroundColor: '#fff', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12,

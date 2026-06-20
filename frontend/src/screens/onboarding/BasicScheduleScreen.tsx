@@ -147,30 +147,9 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
     setAddingBath(false);
   };
 
-  // 고정 일과
-  const [fixedItems,     setFixedItems]     = useState<FixedItem[]>([]);
-  const [addingFixed,    setAddingFixed]    = useState(false);
-  const [fixedName,      setFixedName]      = useState('');
-  const [fixedTime,      setFixedTime]      = useState('09:00');
-  const [fixedEndTime,   setFixedEndTime]   = useState('10:00');
-  const [fixedDays,      setFixedDays]      = useState<number[]>([]); // 빈 배열 = 매일
+  // 고정 일과(복지관·병원 등)는 다음 페이지(시간표 확인)의 '일과 추가'에서 입력한다.
 
-  const addFixedItem = () => {
-    if (!fixedName.trim()) return;
-    if (toMinB(fixedEndTime) <= toMinB(fixedTime)) { Alert.alert('시간 오류', '끝나는 시간이 시작 시간보다 늦어야 해요.'); return; }
-    setFixedItems(prev => [...prev, { name: fixedName.trim(), time: fixedTime, endTime: fixedEndTime, days: fixedDays }]);
-    setFixedName('');
-    setFixedTime('09:00');
-    setFixedEndTime('10:00');
-    setFixedDays([]);
-    setAddingFixed(false);
-  };
-
-  const toggleFixedDay = (d: number) => {
-    setFixedDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort());
-  };
-
-  // AI 없이 — 입력한 기본 일과 + 고정 일과로 시간표를 그대로 생성 (나머지는 다음 편집 화면에서 추가)
+  // AI 없이 — 입력한 기본 시간으로 시간표를 그대로 생성 (고정 일과는 다음 편집 화면에서 추가)
   const handleGenerate = () => {
     const ALL = [0, 1, 2, 3, 4, 5, 6];
     const out: ScheduleParam[] = [];
@@ -187,12 +166,6 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
       push(day, sleepTime,     '23:59',                               '취침',      '😴'); // 취침=기상까지(명목 23:59)
       faceTimes.forEach(t => push(day, t, minToTimeB(toMinB(t) + 30), '세면',      '🧼')); // 순간
       bathTimes.forEach(t => push(day, t, dur(t),                     '씻기',      '🛁')); // 지속
-    }
-    // 고정 일과 (요일별 — days 비면 매일). 끝 시간은 입력값 사용
-    for (const f of fixedItems) {
-      const days = f.days.length ? f.days : ALL;
-      const endTime = f.endTime && toMinB(f.endTime) > toMinB(f.time) ? f.endTime : minToTimeB(toMinB(f.time) + 60);
-      for (const day of days) push(day, f.time, endTime, f.name, '📍');
     }
     navigation.navigate('ScheduleSetup', { ...params, schedules: out });
   };
@@ -312,97 +285,6 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
           )}
         </View>
 
-        {/* 고정 일과 섹션 */}
-        <View style={styles.section}>
-          <View style={styles.medHeader}>
-            <Text style={styles.sectionTitle}>고정 일과</Text>
-            <Text style={styles.medOptional}>매일 반드시 있는 것</Text>
-          </View>
-          <Text style={styles.fixedHint}>
-            복지관·학교·병원처럼 절대 빠지면 안 되는 일과를 추가하세요.
-          </Text>
-
-          {fixedItems.map((item, i) => (
-            <View key={i} style={styles.fixedChip}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.fixedChipName}>{item.name}</Text>
-                <Text style={styles.fixedChipSub}>
-                  {item.time}~{item.endTime} · {item.days.length === 0 ? '매일' : item.days.map(d => DAY_LABELS[d]).join('/')}
-                </Text>
-              </View>
-              <TouchableOpacity onPress={() => setFixedItems(prev => prev.filter((_, j) => j !== i))}>
-                <Text style={styles.medChipDel}>✕</Text>
-              </TouchableOpacity>
-            </View>
-          ))}
-
-          {addingFixed ? (
-            <View style={styles.fixedAddBox}>
-              {/* 빠른 선택 */}
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
-                <View style={{ flexDirection: 'row', gap: 8 }}>
-                  {FIXED_SUGGESTIONS.map(s => (
-                    <TouchableOpacity
-                      key={s}
-                      style={[styles.fixedSugChip, fixedName === s && styles.fixedSugChipOn]}
-                      onPress={() => setFixedName(s)}
-                    >
-                      <Text style={[styles.fixedSugText, fixedName === s && styles.fixedSugTextOn]}>{s}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </ScrollView>
-
-              {/* 이름 직접 입력 */}
-              <TextInput
-                style={styles.fixedNameInput}
-                placeholder="일과 이름 직접 입력..."
-                placeholderTextColor="#bbb"
-                value={fixedName}
-                onChangeText={setFixedName}
-              />
-
-              {/* 시간 선택 (시작 ~ 끝) */}
-              <View style={styles.fixedTimeRow}>
-                <View style={{ flex: 1 }}><TimePickerField value={fixedTime} onChange={(v) => { setFixedTime(v); if (toMinB(v) >= toMinB(fixedEndTime)) setFixedEndTime(minToTimeB(toMinB(v) + 60)); }} /></View>
-                <Text style={styles.fixedTimeSep}>~</Text>
-                <View style={{ flex: 1 }}><TimePickerField value={fixedEndTime} onChange={setFixedEndTime} /></View>
-              </View>
-
-              {/* 요일 선택 */}
-              <Text style={styles.fixedDayLabel}>요일 선택 (미선택 = 매일)</Text>
-              <View style={styles.fixedDayRow}>
-                {DAY_LABELS.map((d, i) => (
-                  <TouchableOpacity
-                    key={i}
-                    style={[styles.dayBtn, fixedDays.includes(i) && styles.dayBtnOn]}
-                    onPress={() => toggleFixedDay(i)}
-                  >
-                    <Text style={[styles.dayBtnText, fixedDays.includes(i) && styles.dayBtnTextOn]}>{d}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              <View style={styles.medAddBtns}>
-                <TouchableOpacity style={styles.medCancelBtn} onPress={() => setAddingFixed(false)}>
-                  <Text style={styles.medCancelText}>취소</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.medConfirmBtn, { backgroundColor: colors.primary }]}
-                  onPress={addFixedItem}
-                  disabled={!fixedName.trim()}
-                >
-                  <Text style={styles.medConfirmText}>추가</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          ) : (
-            <TouchableOpacity style={styles.medAddBtn} onPress={() => setAddingFixed(true)}>
-              <Text style={styles.medAddBtnText}>+ 고정 일과 추가</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
         {/* 다음 — 입력한 시간으로 시간표 만들기 */}
         <TouchableOpacity
           style={styles.generateBtn}
@@ -429,7 +311,7 @@ const styles = StyleSheet.create({
   },
   backBtn: {
     paddingHorizontal: 14, paddingVertical: 8,
-    backgroundColor: colors.primaryBg, borderRadius: 20,
+    backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 20,
   },
   backText: { fontSize: 15, color: colors.primary, fontWeight: '800' },
   stepRow:  { flexDirection: 'row', alignItems: 'center', gap: 4 },

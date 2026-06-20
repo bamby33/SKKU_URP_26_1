@@ -185,7 +185,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 14,
     paddingVertical: 8,
-    backgroundColor: 'rgba(6,95,70,0.1)',
+    backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#E2E8F0',
     borderRadius: 20,
   },
   backText: { fontSize: 15, color: colors.primary, fontWeight: '800' },

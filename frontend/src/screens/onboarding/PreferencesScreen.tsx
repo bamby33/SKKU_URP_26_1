@@ -278,7 +278,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 14,
     paddingVertical: 8,
-    backgroundColor: colors.primaryBg,
+    backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#E2E8F0',
     borderRadius: 20,
   },
   backText: { fontSize: 15, color: colors.primary, fontWeight: '800' },
