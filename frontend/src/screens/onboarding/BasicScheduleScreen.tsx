@@ -149,8 +149,37 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
 
   // 고정 일과(복지관·병원 등)는 다음 페이지(시간표 확인)의 '일과 추가'에서 입력한다.
 
+  const getRoutineError = (time: string, label: string): string => {
+    if (label === '취침') {
+      if (toMinB(time) <= toMinB(wakeTime)) return '취침 시간은 기상 시간 이후여야 합니다.';
+      return '';
+    }
+    if (label !== '기상') {
+      if (toMinB(time) < toMinB(wakeTime)) return '일과 시간은 기상 시간 이후여야 합니다.';
+      if (toMinB(time) >= toMinB(sleepTime)) return '일과 시간은 취침 시간 이전이어야 합니다.';
+    }
+    return '';
+  };
+
   // AI 없이 — 입력한 기본 시간으로 시간표를 그대로 생성 (고정 일과는 다음 편집 화면에서 추가)
   const handleGenerate = () => {
+    const routineRows: [string, string, string][] = [
+      ['아침 식사', breakfastTime, ''],
+      ['점심 식사', lunchTime, ''],
+      ['저녁 식사', dinnerTime, ''],
+      ['취침', sleepTime, ''],
+    ];
+    for (const [label, time] of routineRows) {
+      if (getRoutineError(time, label)) {
+        Alert.alert('시간 오류', getRoutineError(time, label));
+        return;
+      }
+    }
+    const badFace = faceTimes.find(t => toMinB(t) < toMinB(wakeTime) || toMinB(t) >= toMinB(sleepTime));
+    if (badFace) { Alert.alert('시간 오류', `세면 시간 ${badFace}은(는) 기상 시간 이후, 취침 시간 이전이어야 합니다.`); return; }
+    const badBath = bathTimes.find(t => toMinB(t) < toMinB(wakeTime) || toMinB(t) >= toMinB(sleepTime));
+    if (badBath) { Alert.alert('시간 오류', `씻기 시간 ${badBath}은(는) 기상 시간 이후, 취침 시간 이전이어야 합니다.`); return; }
+
     const ALL = [0, 1, 2, 3, 4, 5, 6];
     const out: ScheduleParam[] = [];
     const push = (day: number, time: string, endTime: string, name: string, emoji: string) => {
@@ -208,9 +237,14 @@ export default function BasicScheduleScreen({ navigation, route }: Props) {
             ['🍽️', '저녁 식사', dinnerTime,    setDinnerTime],
             ['🌙', '취침',      sleepTime,     setSleepTime],
           ] as [string, string, string, (v: string) => void][]).map(([em, lb, val, set]) => (
-            <View key={lb} style={styles.timeRow}>
-              <Text style={styles.timeRowLabel}>{em}  {lb}</Text>
-              <View style={styles.timeRowPicker}><TimePickerField value={val} onChange={set} /></View>
+            <View key={lb}>
+              <View style={styles.timeRow}>
+                <Text style={styles.timeRowLabel}>{em}  {lb}</Text>
+                <View style={styles.timeRowPicker}><TimePickerField value={val} onChange={set} /></View>
+              </View>
+              {getRoutineError(val, lb) !== '' && (
+                <Text style={styles.timeErrorText}>{getRoutineError(val, lb)}</Text>
+              )}
             </View>
           ))}
         </View>
@@ -421,6 +455,7 @@ const styles = StyleSheet.create({
 
   // 고정 일과
   fixedHint: { fontSize: 12, color: '#94A3B8', lineHeight: 18 },
+  timeErrorText: { fontSize: 12, color: '#E57373', fontWeight: '600', marginTop: 2 },
   fixedChip: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
     backgroundColor: '#F1F5F9', borderRadius: 10,

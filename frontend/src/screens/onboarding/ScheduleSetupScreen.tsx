@@ -128,12 +128,25 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
   const [addStart,  setAddStart]  = useState('09:00');
   const [addEnd,    setAddEnd]    = useState('10:00');
   const [addDays,   setAddDays]   = useState<boolean[]>(Array(7).fill(false));
+  const [addOverlapError, setAddOverlapError] = useState('');
 
   // 수정 모달
-  const [editBlock, setEditBlock] = useState<Block | null>(null);
-  const [editName,  setEditName]  = useState('');
-  const [editStart, setEditStart] = useState('');
-  const [editEnd,   setEditEnd]   = useState('');
+  const [editBlock,       setEditBlock]      = useState<Block | null>(null);
+  const [editName,        setEditName]       = useState('');
+  const [editStart,       setEditStart]      = useState('');
+  const [editEnd,         setEditEnd]        = useState('');
+  const [editOverlapError, setEditOverlapError] = useState('');
+
+  const checkOverlap = (days: number[], startTime: string, endTime: string, excludeId?: string): string | null => {
+    const hit = blocks.find(b =>
+      days.includes(b.day) &&
+      (!excludeId || b.id !== excludeId) &&
+      !isBedtime(b.name) &&
+      toMin(b.startTime) < toMin(endTime) &&
+      toMin(b.endTime) > toMin(startTime)
+    );
+    return hit ? `'${hit.name}'과(와) 시간이 겹쳐요. 다른 일과와 겹치면 안 됩니다.` : null;
+  };
 
   const dayBlocks = blocks
     .filter(b => b.day === selectedDay)
@@ -147,6 +160,7 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
     setAddName('');
     setAddStart('09:00');
     setAddEnd('10:00');
+    setAddOverlapError('');
     setShowAdd(true);
   };
 
@@ -163,12 +177,15 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
     const days = addDays.map((on, i) => on ? i : -1).filter(i => i >= 0);
     if (!days.length) { Alert.alert('요일 선택', '요일을 하나 이상 선택해주세요.'); return; }
 
+    if (!bedtime) {
+      const overlapMsg = checkOverlap(days, addStart, endT);
+      if (overlapMsg) { setAddOverlapError(overlapMsg); return; }
+    }
+    setAddOverlapError('');
     setBlocks(prev => {
-      // 선택 요일에서 겹치는 블록 제거 후 추가 (정확한 시각 기준)
-      // 취침은 하루 하나 — 같은 요일 기존 취침 제거. 그 외엔 시간 겹치는 것만 제거.
-      const filtered = prev.filter(b => bedtime
-        ? !(days.includes(b.day) && isBedtime(b.name))
-        : !(days.includes(b.day) && toMin(b.startTime) < toMin(endT) && toMin(b.endTime) > toMin(addStart)));
+      const filtered = bedtime
+        ? prev.filter(b => !(days.includes(b.day) && isBedtime(b.name)))
+        : prev;
       const created = days.map(day => ({
         id: nid(), day, startSlot: ss, endSlot: es, startTime: addStart, endTime: endT,
         name, emoji: emojiFor(name), color: scheduleColor(name),
@@ -227,6 +244,11 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
     if (!editName.trim()) { Alert.alert('이름 필요', '일과 이름을 입력해주세요.'); return; }
     if (!bedtime && !instant && toMin(editStart) >= toMin(editEnd)) { Alert.alert('시간 오류', '종료 시간이 시작 시간보다 늦어야 해요.'); return; }
     const endT = bedtime ? minToTime(START_H * 60 + TOTAL * 30) : instant ? minToTime(toMin(editStart) + 30) : editEnd;
+    if (!bedtime) {
+      const overlapMsg = checkOverlap([editBlock.day], editStart, endT, editBlock.id);
+      if (overlapMsg) { setEditOverlapError(overlapMsg); return; }
+    }
+    setEditOverlapError('');
     const ss = toSlot(editStart);
     const es = Math.max(ss + 1, toSlot(endT));
     setBlocks(p => p.map(b => b.id === editBlock.id
@@ -251,7 +273,6 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
     navigation.navigate('AccountSetup', {
       userName, age, gender, likes, dislikes, problemNotes, themeColor,
       disabilityType, disabilityLevel, occupation,
-      dailyLife: (route.params as any).dailyLife ?? '',
       schedules: blocks.map(b => ({
         day: b.day, startSlot: b.startSlot, endSlot: b.endSlot,
         startTime: b.startTime, endTime: b.endTime,
@@ -463,6 +484,9 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
                 </>
               )}
             </View>
+            {addOverlapError !== '' && (
+              <Text style={styles.overlapErrorText}>{addOverlapError}</Text>
+            )}
             <Text style={styles.modalLabel}>요일 선택</Text>
             <View style={styles.dayRow}>
               {DAY_LABELS.map((d, i) => (
@@ -518,6 +542,9 @@ export default function ScheduleSetupScreen({ navigation, route }: Props) {
               )}
             </View>
 
+            {editOverlapError !== '' && (
+              <Text style={styles.overlapErrorText}>{editOverlapError}</Text>
+            )}
             <View style={styles.modalBtns}>
               <TouchableOpacity onPress={deleteBlock} style={styles.deleteBtn}>
                 <Text style={styles.deleteText}>삭제</Text>
@@ -700,6 +727,7 @@ const styles = StyleSheet.create({
   deleteBtn:   { flex: 1, paddingVertical: 14, borderRadius: 14, backgroundColor: '#FEE2E2', alignItems: 'center' },
   deleteText:  { fontSize: 14, fontWeight: '700', color: '#DC2626' },
   cancelBtn:   { flex: 1, paddingVertical: 14, borderRadius: 14, backgroundColor: '#E8F5EE', alignItems: 'center' },
+  overlapErrorText: { fontSize: 12, color: '#E57373', fontWeight: '600', marginTop: 4, marginBottom: 2 },
   cancelText:  { fontSize: 14, fontWeight: '700', color: '#888' },
   confirmBtn:  { flex: 2, paddingVertical: 14, borderRadius: 14, backgroundColor: colors.primary, alignItems: 'center' },
   confirmText: { fontSize: 14, fontWeight: '800', color: '#fff' },

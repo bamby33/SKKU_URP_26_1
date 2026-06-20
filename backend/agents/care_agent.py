@@ -145,19 +145,25 @@ def _build_system_prompt(user_profile: dict | None, behavior_context: str = "") 
     guideline = DISABILITY_GUIDELINES.get(d_type, {}).get(d_level, "")
     style     = FEEDBACK_STYLE.get(f_mode, "")
 
-    # special_notes에서 좋아하는 것 파싱
+    # special_notes 파싱
     likes_str = ""
+    dislikes_str = ""
+    problem_notes_str = ""
     for line in notes.split("\n"):
         if "좋아하는 것:" in line:
             likes_str = line.split("좋아하는 것:")[1].strip()
-            break
+        elif "싫어하는 것:" in line:
+            dislikes_str = line.split("싫어하는 것:")[1].strip()
+        elif "문제행동 특이사항:" in line:
+            problem_notes_str = line.split("문제행동 특이사항:")[1].strip()
 
     profile_section = f"""
 [현재 사용자 정보]
 이름: {name}
 장애 유형: {d_type} / {d_level}
-특이사항: {notes if notes else "없음"}
 좋아하는 것: {likes_str if likes_str else "미입력"}
+싫어하는 것·힘든 것: {dislikes_str if dislikes_str else "미입력"}
+문제행동 특이사항: {problem_notes_str if problem_notes_str else "미입력"}
 피드백 방식: {f_mode}
 
 [개별화 대화 지침]
@@ -166,6 +172,8 @@ def _build_system_prompt(user_profile: dict | None, behavior_context: str = "") 
 - 가끔 "{name}" 이름을 불러주며 친근하게 대화하세요.
 - "{likes_str if likes_str else '좋아하는 것'}"은 **2단계에서 흥분을 가라앉히고 다른 행동으로 전환할 때에만**, 그것도 대화 흐름상 자연스러울 때 한 번만 제안하세요.
 - 평소 대화·1단계·일과 확인 등 그 외 상황에서는 좋아하는 것을 **억지로 꺼내지 마세요** (뜬금없는 언급 금지).
+- "{dislikes_str}"에 해당하는 상황은 최대한 자극을 줄이고, 대화 방식을 부드럽게 유지하세요.
+- 문제행동 특이사항: "{problem_notes_str}" — 이 패턴이 감지되면 즉시 1단계 대응을 시작하세요.
 """
     return BASE_SYSTEM_PROMPT + profile_section + (("\n" + behavior_context) if behavior_context else "")
 

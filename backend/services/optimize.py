@@ -10,7 +10,7 @@ import re
 from datetime import timedelta
 from sqlalchemy.orm import Session
 from models.database import (
-    Schedule, ScheduleLog, ScheduleStatus, ScheduleTransition, DailyReport,
+    Schedule, ScheduleLog, ScheduleStatus, ScheduleTransition, DailyReport, User,
 )
 from timeutil import kst_now, kst_today_start
 from services.achievement import schedule_suitability
@@ -163,6 +163,28 @@ def next_day_suggestions(user_id: int, db: Session, days: int = 7) -> list[dict]
                 "message": f"요즘 '힘들어요'가 많아요. 내일은 '{target['title']}' 같은 활동 일과를 하나 빼서 여유를 줘보세요.",
                 "applicable": False, "action": {},
             })
+
+    # ── 5) add_easy: 자기평가 나쁨 + 완료율 낮음 → 좋아하는 활동 추가 제안 ──
+    if len(recent_reports) >= 2 and len(bad) >= 2:
+        rates = [r.achieved / r.total for r in recent_reports if r.total and r.total > 0]
+        avg_rate = sum(rates) / len(rates) if rates else 1.0
+        if avg_rate < 0.6:
+            user = db.query(User).filter(User.id == user_id).first()
+            likes_text = ""
+            for line in (user.special_notes or "").splitlines():
+                if "좋아하는 것:" in line:
+                    likes_text = line.split("좋아하는 것:")[1].strip()
+                    break
+            if likes_text:
+                first_like = likes_text.split(",")[0].split(".")[0].split("、")[0].strip()
+                suggestions.append({
+                    "type": "add_easy",
+                    "title": first_like,
+                    "schedule_ids": [],
+                    "message": f"요즘 힘들어하고 일과도 잘 못 하고 있어요. '{first_like}'처럼 좋아하는 활동을 짧게 하나 추가해서 기분을 북돋아 보세요.",
+                    "applicable": False,
+                    "action": {},
+                })
 
     return suggestions
 
